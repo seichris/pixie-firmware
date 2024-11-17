@@ -8,7 +8,7 @@
 #include "esp_timer.h"
 
 #include "firefly-scene.h"
-#include "firefly-display.h"
+// #include "firefly-display.h"
 
 #include "crypto/keccak256.h"
 #include "crypto/ecc.h"
@@ -529,7 +529,8 @@ static void taskIoFunc(void* pvParameter) {
         FfxNode fill = ffx_scene_createFill(scene, 0x0000);
         ffx_scene_appendChild(root, fill);
 
-        FfxNode bg = ffx_scene_createImage(scene, image_background, sizeof(image_background));
+        // FfxNode bg = ffx_scene_createImage(scene, image_background, sizeof(image_background));
+        FfxNode bg = ffx_scene_createImage(scene, image_firefly_qr, sizeof(image_firefly_qr));
         ffx_scene_appendChild(root, bg);
 
         FfxNode pixies = ffx_scene_createGroup(scene);

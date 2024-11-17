@@ -10,3 +10,4 @@ node ../firefly-scene/tools/lib/test-cli --rgba assets/ship.png --tag ship > mai
 node ../firefly-scene/tools/lib/test-cli --rgb assets/text-dead.png --tag textdead > main/images/image-text-dead.h
 node ../firefly-scene/tools/lib/test-cli --rgb assets/text-win.png --tag textwin > main/images/image-text-win.h
 node ../firefly-scene/tools/lib/test-cli --rgb assets/text-hold.png --tag texthold > main/images/image-text-hold.h
+node ../firefly-scene/tools/lib/test-cli --rgb assets/firefly_app_qr.png --tag background > main/images/image-firefly-qr.h
