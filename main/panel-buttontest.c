@@ -32,15 +32,15 @@ typedef struct ButtonTestState {
 } ButtonTestState;
 
 static void updateButtonDisplay(ButtonTestState *state, Keys keys) {
-    // Update button status display
-    snprintf(state->button1Text, sizeof(state->button1Text), "Button 1: %s (North=0x%04x)", 
+    // Update button status display with correct key mapping
+    snprintf(state->button1Text, sizeof(state->button1Text), "Button 1: %s (Cancel=0x%04x)", 
+             (keys & KeyCancel) ? "PRESSED" : "released", KeyCancel);
+    snprintf(state->button2Text, sizeof(state->button2Text), "Button 2: %s (Ok=0x%04x)", 
+             (keys & KeyOk) ? "PRESSED" : "released", KeyOk);
+    snprintf(state->button3Text, sizeof(state->button3Text), "Button 3: %s (North=0x%04x)", 
              (keys & KeyNorth) ? "PRESSED" : "released", KeyNorth);
-    snprintf(state->button2Text, sizeof(state->button2Text), "Button 2: %s (East=0x%04x)", 
-             (keys & KeyEast) ? "PRESSED" : "released", KeyEast);
-    snprintf(state->button3Text, sizeof(state->button3Text), "Button 3: %s (South=0x%04x)", 
+    snprintf(state->button4Text, sizeof(state->button4Text), "Button 4: %s (South=0x%04x)", 
              (keys & KeySouth) ? "PRESSED" : "released", KeySouth);
-    snprintf(state->button4Text, sizeof(state->button4Text), "Button 4: %s (West=0x%04x)", 
-             (keys & KeyWest) ? "PRESSED" : "released", KeyWest);
     snprintf(state->hexText, sizeof(state->hexText), "Raw Keys: 0x%04x", keys);
     
     ffx_sceneLabel_setText(state->button1Label, state->button1Text);
@@ -51,13 +51,13 @@ static void updateButtonDisplay(ButtonTestState *state, Keys keys) {
     
     // Change color for pressed buttons
     ffx_sceneLabel_setTextColor(state->button1Label, 
-        (keys & KeyNorth) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
+        (keys & KeyCancel) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
     ffx_sceneLabel_setTextColor(state->button2Label, 
-        (keys & KeyEast) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
+        (keys & KeyOk) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
     ffx_sceneLabel_setTextColor(state->button3Label, 
-        (keys & KeySouth) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
+        (keys & KeyNorth) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
     ffx_sceneLabel_setTextColor(state->button4Label, 
-        (keys & KeyWest) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
+        (keys & KeySouth) ? ffx_color_rgb(0, 255, 0) : ffx_color_rgb(255, 255, 255));
 }
 
 static void keyChanged(EventPayload event, void *_state) {
@@ -68,17 +68,17 @@ static void keyChanged(EventPayload event, void *_state) {
     // Detailed logging for each button
     printf("[buttontest] ======== BUTTON PRESS EVENT ========\n");
     printf("[buttontest] Raw keys value: 0x%04x\n", keys);
-    printf("[buttontest] KeyNorth (0x%04x): %s\n", KeyNorth, (keys & KeyNorth) ? "PRESSED" : "released");
-    printf("[buttontest] KeyEast  (0x%04x): %s\n", KeyEast, (keys & KeyEast) ? "PRESSED" : "released");
-    printf("[buttontest] KeySouth (0x%04x): %s\n", KeySouth, (keys & KeySouth) ? "PRESSED" : "released");
-    printf("[buttontest] KeyWest  (0x%04x): %s\n", KeyWest, (keys & KeyWest) ? "PRESSED" : "released");
+    printf("[buttontest] KeyCancel (0x%04x): %s\n", KeyCancel, (keys & KeyCancel) ? "PRESSED" : "released");
+    printf("[buttontest] KeyOk     (0x%04x): %s\n", KeyOk, (keys & KeyOk) ? "PRESSED" : "released");
+    printf("[buttontest] KeyNorth  (0x%04x): %s\n", KeyNorth, (keys & KeyNorth) ? "PRESSED" : "released");
+    printf("[buttontest] KeySouth  (0x%04x): %s\n", KeySouth, (keys & KeySouth) ? "PRESSED" : "released");
     printf("[buttontest] =====================================\n");
     
     // Update visual display
     updateButtonDisplay(state, keys);
     
     // Handle exit with any button hold for 2 seconds
-    bool anyButtonPressed = (keys & (KeyNorth | KeyEast | KeySouth | KeyWest)) != 0;
+    bool anyButtonPressed = (keys & (KeyCancel | KeyOk | KeyNorth | KeySouth)) != 0;
     
     if (anyButtonPressed) {
         if (state->southHoldStart == 0) {
@@ -153,7 +153,7 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     updateButtonDisplay(state, 0);
     
     // Register for all key events
-    panel_onEvent(EventNameKeysChanged | KeyNorth | KeyEast | KeySouth | KeyWest, keyChanged, state);
+    panel_onEvent(EventNameKeysChanged | KeyCancel | KeyOk | KeyNorth | KeySouth, keyChanged, state);
     panel_onEvent(EventNameRenderScene, render, state);
     
     return 0;

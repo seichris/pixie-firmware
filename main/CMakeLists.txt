@@ -18,7 +18,6 @@ idf_component_register(
     "panel-buttontest.c"
     "pixels.c"
     "qr-generator.c"
-    "task-ble.c"
     "task-io.c"
     "utils.c"
 

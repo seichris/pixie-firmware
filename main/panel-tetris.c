@@ -232,11 +232,24 @@ static void updateVisuals(TetrisState *state) {
 
 static void keyChanged(EventPayload event, void *_state) {
     TetrisState *state = _state;
+    printf("[tetris] keyChanged called! keys=0x%04x\n", event.props.keys.down);
     
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
     Keys keys = event.props.keys.down;
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    static uint32_t gameStartTime = 0;
+    if (gameStartTime == 0) {
+        gameStartTime = ticks();
+        printf("[tetris] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - gameStartTime < 500) {
+        printf("[tetris] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (rotate piece)

@@ -42,16 +42,20 @@ static void updateAddressDisplay(WalletState *state) {
 
 static void showQRCode(WalletState *state) {
     // Generate QR code for the address
-    qr_generate(&state->qrCode, state->addressStr);
+    printf("[wallet] Generating QR for: %s\n", state->addressStr);
+    bool qrSuccess = qr_generate(&state->qrCode, state->addressStr);
+    printf("[wallet] QR generation result: %s (size=%d)\n", qrSuccess ? "SUCCESS" : "FAILED", state->qrCode.size);
     
     // Hide address text
     ffx_sceneNode_setPosition(state->nodeAddress1, (FfxPoint){ .x = -300, .y = 0 });
     ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = -300, .y = 0 });
     
-    // Show QR modules
-    int moduleSize = 4;  // 4x4 pixels per module
-    int startX = 50;     // Center QR code
-    int startY = 60;
+    // Show QR modules (full screen size)
+    int moduleSize = 18;  // Large 18x18 pixels per module for full screen
+    int startX = 5;       // Start near left edge  
+    int startY = 5;       // Start near top edge
+    
+    printf("[wallet] Displaying QR modules at startX=%d, startY=%d\n", startX, startY);
     
     for (int y = 0; y < QR_SIZE; y++) {
         for (int x = 0; x < QR_SIZE; x++) {
@@ -59,16 +63,23 @@ static void showQRCode(WalletState *state) {
             bool isBlack = qr_getModule(&state->qrCode, x, y);
             
             if (isBlack) {
+                ffx_sceneBox_setColor(state->qrModules[moduleIndex], ffx_color_rgb(0, 0, 0));  // Black
                 ffx_sceneNode_setPosition(state->qrModules[moduleIndex], (FfxPoint){
                     .x = startX + x * moduleSize,
                     .y = startY + y * moduleSize
                 });
             } else {
-                // Hide white modules  
-                ffx_sceneNode_setPosition(state->qrModules[moduleIndex], (FfxPoint){ .x = -300, .y = 0 });
+                // White modules - show as white
+                ffx_sceneBox_setColor(state->qrModules[moduleIndex], ffx_color_rgb(255, 255, 255));
+                ffx_sceneNode_setPosition(state->qrModules[moduleIndex], (FfxPoint){
+                    .x = startX + x * moduleSize,
+                    .y = startY + y * moduleSize
+                });
             }
         }
     }
+    
+    printf("[wallet] QR modules positioned successfully\n");
 }
 
 static void hideQRCode(WalletState *state) {
@@ -86,6 +97,7 @@ static void keyChanged(EventPayload event, void *_state) {
     WalletState *state = _state;
     
     Keys keys = event.props.keys.down;
+    printf("[wallet] keyChanged: keys=0x%04x, showingQR=%s\n", keys, state->showingQR ? "true" : "false");
     
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (generate new address)
@@ -125,13 +137,12 @@ static void keyChanged(EventPayload event, void *_state) {
         if (!state->showingQR) {
             // Show QR code view
             state->showingQR = true;
-            ffx_sceneLabel_setText(state->nodeAddress1, "QR Code Display");
-            ffx_sceneLabel_setText(state->nodeAddress2, state->addressStr);
+            showQRCode(state);
             ffx_sceneLabel_setText(state->nodeInstructions, "Cancel=New  North=Back  Ok=Exit");
         } else {
             // Toggle back to address view
             state->showingQR = false;
-            updateAddressDisplay(state);
+            hideQRCode(state);
             ffx_sceneLabel_setText(state->nodeInstructions, "Cancel=New  North=QR  Ok=Exit");
         }
         return;
@@ -167,10 +178,13 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneGroup_appendChild(node, state->nodeInstructions);
     ffx_sceneNode_setPosition(state->nodeInstructions, (FfxPoint){ .x = 30, .y = 140 });
     
-    // Temporarily disable QR modules to prevent crashes
-    // TODO: Re-implement with simpler approach
+    // Create QR visual modules (large modules for full screen display)
     for (int i = 0; i < QR_SIZE * QR_SIZE; i++) {
-        state->qrModules[i] = NULL;  // Don't create visual modules for now
+        state->qrModules[i] = ffx_scene_createBox(scene, ffx_size(18, 18));  // Large 18x18 modules
+        ffx_sceneBox_setColor(state->qrModules[i], COLOR_BLACK);
+        ffx_sceneGroup_appendChild(node, state->qrModules[i]);
+        // Initially hide all modules off-screen
+        ffx_sceneNode_setPosition(state->qrModules[i], (FfxPoint){ .x = -300, .y = 0 });
     }
     
     // Initialize state

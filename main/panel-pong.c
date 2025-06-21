@@ -165,8 +165,8 @@ static void updateGame(PongState *state) {
 }
 
 static void updateVisuals(PongState *state) {
-    // Apply game area offset (x=50, y=20)
-    int offsetX = 50;
+    // Apply game area offset (x=40, y=20)
+    int offsetX = 40;
     int offsetY = 20;
     
     // Player paddle at bottom
@@ -189,6 +189,19 @@ static void updateVisuals(PongState *state) {
 
 static void keyChanged(EventPayload event, void *_state) {
     PongState *state = _state;
+    printf("[pong] keyChanged called! keys=0x%04x\n", event.props.keys.down);
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    static uint32_t gameStartTime = 0;
+    if (gameStartTime == 0) {
+        gameStartTime = ticks();
+        printf("[pong] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - gameStartTime < 500) {
+        printf("[pong] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (speed boost) 
@@ -262,13 +275,13 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     state->gameArea = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, GAME_HEIGHT));
     ffx_sceneBox_setColor(state->gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, state->gameArea);
-    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 50, .y = 20 }); // Right side positioning
+    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 40, .y = 20 }); // Right side positioning
     
     // Create center line (horizontal for vertical play)
     state->centerLine = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, 2));
     ffx_sceneBox_setColor(state->centerLine, ffx_color_rgb(128, 128, 128));
     ffx_sceneGroup_appendChild(node, state->centerLine);
-    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 50, .y = 20 + GAME_HEIGHT/2 - 1 });
+    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 40, .y = 20 + GAME_HEIGHT/2 - 1 });
     
     // Create score label - positioned on left side
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontMedium, "Player 0 - AI 0");

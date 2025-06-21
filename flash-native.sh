@@ -38,7 +38,7 @@ echo -e "${GREEN}✅ Found device: $DEVICE${NC}"
 # Build first
 echo ""
 echo "🔨 Building firmware..."
-docker run --rm -v $PWD:/project -w /project -e HOME=/tmp -e IDF_TARGET=esp32c3 espressif/idf:v5.4 bash -c "idf.py build"
+docker run --rm -v $PWD:/project -w /project -e HOME=/tmp -e IDF_TARGET=esp32c3 espressif/idf bash -c "idf.py fullclean && idf.py build"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Build failed${NC}"

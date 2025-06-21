@@ -11,7 +11,7 @@
 #include "panel-snake.h"
 #include "utils.h"
 
-#define GRID_SIZE 12
+#define GRID_SIZE 10
 #define GRID_WIDTH 20
 #define GRID_HEIGHT 20
 #define MAX_SNAKE_LENGTH 50
@@ -139,13 +139,25 @@ static void moveSnake(SnakeState *state) {
 }
 
 static void keyChanged(EventPayload event, void *_state) {
-    printf("[snake] keyChanged called!\n");
+    printf("[snake] keyChanged called! keys=0x%04x\n", event.props.keys.down);
     SnakeState *state = _state;
     
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
     Keys keys = event.props.keys.down;
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    static uint32_t gameStartTime = 0;
+    if (gameStartTime == 0) {
+        gameStartTime = ticks();
+        printf("[snake] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - gameStartTime < 500) {
+        printf("[snake] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (rotate direction)
@@ -268,16 +280,16 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     SnakeState *state = _state;
     state->scene = scene;
     
-    // Create game area background
-    state->gameArea = ffx_scene_createBox(scene, ffx_size(240, 240));
+    // Create game area background - positioned on right side near buttons
+    state->gameArea = ffx_scene_createBox(scene, ffx_size(200, 200));
     ffx_sceneBox_setColor(state->gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, state->gameArea);
-    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 0, .y = 0 });
+    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 30, .y = 20 });
     
-    // Create score label
+    // Create score label - positioned on left side for clear visibility
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontMedium, "Score: 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
-    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 10 });
+    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
     
     // Create snake body segments
     for (int i = 0; i < MAX_SNAKE_LENGTH; i++) {
