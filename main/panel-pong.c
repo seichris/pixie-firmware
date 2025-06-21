@@ -15,8 +15,8 @@
 #define PADDLE_WIDTH 4
 #define PADDLE_HEIGHT 30
 #define BALL_SIZE 6
-#define GAME_WIDTH 240
-#define GAME_HEIGHT 240
+#define GAME_WIDTH 180  // Smaller to leave room for positioning
+#define GAME_HEIGHT 200
 #define PADDLE_SPEED 3
 #define BALL_SPEED 2
 
@@ -58,15 +58,26 @@ static void resetBall(PongState *state) {
 static void updateGame(PongState *state) {
     if (state->paused || state->gameOver) return;
     
-    // Move player paddle based on keys (East = Right, West = Left)
-    if (state->keys & KeyEast) {
-        state->playerPaddleX += PADDLE_SPEED;
+    // Standardized controls:
+    // Button 1 (KeyCancel) = Primary action (speed boost)
+    // Button 2 (KeyOk) = Pause/Exit (handled in keyChanged)
+    // Button 3 (KeyNorth) = Up/Right movement (90° counter-clockwise)
+    // Button 4 (KeySouth) = Down/Left movement
+    
+    float speed = (state->keys & KeyCancel) ? PADDLE_SPEED * 2 : PADDLE_SPEED;
+    
+    // 90° counter-clockwise directional controls (like Le Space)
+    // Button 3 (North) = Right movement (in 90° rotated space)
+    if (state->keys & KeyNorth) {
+        state->playerPaddleX += speed;
         if (state->playerPaddleX > GAME_WIDTH - PADDLE_HEIGHT) {
             state->playerPaddleX = GAME_WIDTH - PADDLE_HEIGHT;
         }
     }
-    if (state->keys & KeyWest) {
-        state->playerPaddleX -= PADDLE_SPEED;
+    
+    // Button 4 (South) = Left movement (in 90° rotated space)
+    if (state->keys & KeySouth) {
+        state->playerPaddleX -= speed;
         if (state->playerPaddleX < 0) state->playerPaddleX = 0;
     }
     
@@ -154,36 +165,47 @@ static void updateGame(PongState *state) {
 }
 
 static void updateVisuals(PongState *state) {
+    // Apply game area offset (x=50, y=20)
+    int offsetX = 50;
+    int offsetY = 20;
+    
     // Player paddle at bottom
     ffx_sceneNode_setPosition(state->playerPaddle, (FfxPoint){ 
-        .x = (int)state->playerPaddleX, 
-        .y = GAME_HEIGHT - PADDLE_WIDTH
+        .x = offsetX + (int)state->playerPaddleX, 
+        .y = offsetY + GAME_HEIGHT - PADDLE_WIDTH
     });
     
     // AI paddle at top
     ffx_sceneNode_setPosition(state->aiPaddle, (FfxPoint){ 
-        .x = (int)state->aiPaddleX, 
-        .y = 0
+        .x = offsetX + (int)state->aiPaddleX, 
+        .y = offsetY
     });
     
     ffx_sceneNode_setPosition(state->ball, (FfxPoint){ 
-        .x = (int)state->ballX, 
-        .y = (int)state->ballY 
+        .x = offsetX + (int)state->ballX, 
+        .y = offsetY + (int)state->ballY 
     });
 }
 
 static void keyChanged(EventPayload event, void *_state) {
     PongState *state = _state;
     
-    // Handle South button hold-to-exit
-    if (event.props.keys.down & KeySouth) {
-        if (state->southHoldStart == 0) {
-            state->southHoldStart = ticks();
+    // Standardized controls:
+    // Button 1 (KeyCancel) = Primary action (speed boost) 
+    // Button 2 (KeyOk) = Pause/Exit (hold 1s)
+    // Button 3 (KeyNorth) = Up/Right movement (90° counter-clockwise)
+    // Button 4 (KeySouth) = Down/Left movement
+    
+    static uint32_t okHoldStart = 0;
+    
+    // Handle Ok button hold-to-exit, short press for pause
+    if (event.props.keys.down & KeyOk) {
+        if (okHoldStart == 0) {
+            okHoldStart = ticks();
         }
     } else {
-        // South button released
-        if (state->southHoldStart > 0) {
-            uint32_t holdDuration = ticks() - state->southHoldStart;
+        if (okHoldStart > 0) {
+            uint32_t holdDuration = ticks() - okHoldStart;
             if (holdDuration > 1000) { // 1 second hold
                 panel_pop();
                 return;
@@ -193,13 +215,13 @@ static void keyChanged(EventPayload event, void *_state) {
                     state->paused = !state->paused;
                 }
             }
-            state->southHoldStart = 0;
+            okHoldStart = 0;
         }
     }
     
     if (state->gameOver) {
-        if (event.props.keys.down & KeyNorth) {
-            // Reset game with North button
+        if (event.props.keys.down & KeyCancel) {
+            // Reset game with Cancel button
             state->playerScore = 0;
             state->aiScore = 0;
             state->playerPaddleX = GAME_WIDTH / 2 - PADDLE_HEIGHT / 2;
@@ -213,7 +235,7 @@ static void keyChanged(EventPayload event, void *_state) {
         return;
     }
     
-    // Store key state for continuous movement (East=Right, West=Left)
+    // Store key state for 2-button control
     state->keys = event.props.keys.down;
 }
 
@@ -236,22 +258,22 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     PongState *state = _state;
     state->scene = scene;
     
-    // Create game area background
+    // Create game area background - positioned on right side near buttons
     state->gameArea = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, GAME_HEIGHT));
     ffx_sceneBox_setColor(state->gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, state->gameArea);
-    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 0, .y = 0 });
+    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 50, .y = 20 }); // Right side positioning
     
     // Create center line (horizontal for vertical play)
     state->centerLine = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, 2));
     ffx_sceneBox_setColor(state->centerLine, ffx_color_rgb(128, 128, 128));
     ffx_sceneGroup_appendChild(node, state->centerLine);
-    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 0, .y = GAME_HEIGHT/2 - 1 });
+    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 50, .y = 20 + GAME_HEIGHT/2 - 1 });
     
-    // Create score label
+    // Create score label - positioned on left side
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontMedium, "Player 0 - AI 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
-    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 60, .y = GAME_HEIGHT/2 - 10 });
+    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
     
     // Create paddles (horizontal for vertical play)
     // Player paddle (bottom)
@@ -283,8 +305,8 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     snprintf(state->scoreText, sizeof(state->scoreText), "Player %d - AI %d", state->playerScore, state->aiScore);
     ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
     
-    // Register events
-    panel_onEvent(EventNameKeysChanged | KeyNorth | KeySouth | KeyEast | KeyWest, keyChanged, state);
+    // Register events (4 buttons: Cancel, Ok, North, South)
+    panel_onEvent(EventNameKeysChanged | KeyCancel | KeyOk | KeyNorth | KeySouth, keyChanged, state);
     panel_onEvent(EventNameRenderScene, render, state);
     
     return 0;

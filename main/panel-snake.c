@@ -139,49 +139,51 @@ static void moveSnake(SnakeState *state) {
 }
 
 static void keyChanged(EventPayload event, void *_state) {
+    printf("[snake] keyChanged called!\n");
     SnakeState *state = _state;
     
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
-    // Handle South button hold-to-exit
-    if (event.props.keys.down & KeySouth) {
-        if (state->southHoldStart == 0) {
-            state->southHoldStart = ticks();
+    Keys keys = event.props.keys.down;
+    
+    // Standardized controls:
+    // Button 1 (KeyCancel) = Primary action (rotate direction)
+    // Button 2 (KeyOk) = Pause/Exit (hold 1s)
+    // Button 3 (KeyNorth) = Up/Right movement (90° counter-clockwise like Le Space)  
+    // Button 4 (KeySouth) = Down/Left movement
+    
+    static uint32_t okHoldStart = 0;
+    
+    // Handle Ok button hold-to-exit, short press for pause
+    if (event.props.keys.down & KeyOk) {
+        if (okHoldStart == 0) {
+            okHoldStart = ticks();
         }
     } else {
-        // South button released
-        if (state->southHoldStart > 0) {
-            uint32_t holdDuration = ticks() - state->southHoldStart;
+        if (okHoldStart > 0) {
+            uint32_t holdDuration = ticks() - okHoldStart;
             if (holdDuration > 1000) { // 1 second hold
                 panel_pop();
                 return;
             } else {
-                // Short press - pause/unpause or down movement
-                if (state->gameOver) {
-                    // Do nothing on game over
-                } else {
-                    // Check if we can move down
-                    if (state->direction != DIR_UP) {
-                        state->nextDirection = DIR_DOWN;
-                    } else {
-                        // If can't move down, treat as pause
-                        state->paused = !state->paused;
-                    }
+                // Short press - pause/unpause
+                if (!state->gameOver) {
+                    state->paused = !state->paused;
                 }
             }
-            state->southHoldStart = 0;
+            okHoldStart = 0;
         }
     }
     
     if (state->gameOver) {
-        if (event.props.keys.down & KeyNorth) {
-            // Reset game with North button
+        if (event.props.keys.down & KeyCancel) {
+            // Reset game with Cancel button
             state->snakeLength = 3;
-            state->snake[0] = (Point){10, 10};
-            state->snake[1] = (Point){9, 10};
-            state->snake[2] = (Point){8, 10};
-            state->direction = DIR_RIGHT;
+            state->snake[0] = (Point){10, 10}; // Head in center
+            state->snake[1] = (Point){9, 10};  // Body to the left  
+            state->snake[2] = (Point){8, 10};  // Tail further left
+            state->direction = DIR_RIGHT;      // Initially moving right
             state->nextDirection = DIR_RIGHT;
             state->score = 0;
             state->gameOver = false;
@@ -189,22 +191,59 @@ static void keyChanged(EventPayload event, void *_state) {
             spawnFood(state);
             snprintf(state->scoreText, sizeof(state->scoreText), "Score: %d", state->score);
             ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
+            
+            // Reset visual positions for snake segments
+            for (int i = 0; i < state->snakeLength; i++) {
+                ffx_sceneNode_setPosition(state->snakeBody[i], (FfxPoint){
+                    .x = state->snake[i].x * GRID_SIZE,
+                    .y = state->snake[i].y * GRID_SIZE
+                });
+            }
         }
         return;
     }
     
-    // Direction controls with new universal scheme
-    // North = Up movement
-    if (event.props.keys.down & KeyNorth && state->direction != DIR_DOWN) {
-        state->nextDirection = DIR_UP;
+    if (state->paused) return;
+    
+    // 90° counter-clockwise directional controls (like Le Space)
+    // Button 3 (North) = Up/Right movement 
+    if (event.props.keys.down & KeyNorth) {
+        if (state->direction == DIR_UP || state->direction == DIR_DOWN) {
+            // Currently moving vertically, change to right
+            if (state->direction != DIR_LEFT) state->nextDirection = DIR_RIGHT;
+        } else {
+            // Currently moving horizontally, change to up
+            if (state->direction != DIR_DOWN) state->nextDirection = DIR_UP;
+        }
     }
-    // East = Right movement  
-    else if (event.props.keys.down & KeyEast && state->direction != DIR_LEFT) {
-        state->nextDirection = DIR_RIGHT;
+    
+    // Button 4 (South) = Down/Left movement
+    if (event.props.keys.down & KeySouth) {
+        if (state->direction == DIR_UP || state->direction == DIR_DOWN) {
+            // Currently moving vertically, change to left
+            if (state->direction != DIR_RIGHT) state->nextDirection = DIR_LEFT;
+        } else {
+            // Currently moving horizontally, change to down  
+            if (state->direction != DIR_UP) state->nextDirection = DIR_DOWN;
+        }
     }
-    // West = Left movement
-    else if (event.props.keys.down & KeyWest && state->direction != DIR_RIGHT) {
-        state->nextDirection = DIR_LEFT;
+    
+    // Button 1 (Cancel) = Primary action (rotate direction clockwise)
+    if (event.props.keys.down & KeyCancel) {
+        switch (state->direction) {
+            case DIR_UP:
+                if (state->direction != DIR_DOWN) state->nextDirection = DIR_RIGHT;
+                break;
+            case DIR_RIGHT:
+                if (state->direction != DIR_LEFT) state->nextDirection = DIR_DOWN;
+                break;
+            case DIR_DOWN:
+                if (state->direction != DIR_UP) state->nextDirection = DIR_LEFT;
+                break;
+            case DIR_LEFT:
+                if (state->direction != DIR_RIGHT) state->nextDirection = DIR_UP;
+                break;
+        }
     }
 }
 
@@ -253,12 +292,12 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneBox_setColor(state->food, ffx_color_rgb(255, 0, 0));
     ffx_sceneGroup_appendChild(node, state->food);
     
-    // Initialize game state
+    // Initialize game state - start in center
     state->snakeLength = 3;
-    state->snake[0] = (Point){10, 10};
-    state->snake[1] = (Point){9, 10};
-    state->snake[2] = (Point){8, 10};
-    state->direction = DIR_RIGHT;
+    state->snake[0] = (Point){10, 10}; // Head in center
+    state->snake[1] = (Point){9, 10};  // Body to the left
+    state->snake[2] = (Point){8, 10};  // Tail further left
+    state->direction = DIR_RIGHT;      // Initially moving right
     state->nextDirection = DIR_RIGHT;
     state->score = 0;
     state->gameOver = false;
@@ -271,8 +310,16 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     snprintf(state->scoreText, sizeof(state->scoreText), "Score: %d", state->score);
     ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
     
-    // Register events
-    panel_onEvent(EventNameKeysChanged | KeyNorth | KeySouth | KeyEast | KeyWest, keyChanged, state);
+    // Set initial visual positions for snake segments
+    for (int i = 0; i < state->snakeLength; i++) {
+        ffx_sceneNode_setPosition(state->snakeBody[i], (FfxPoint){
+            .x = state->snake[i].x * GRID_SIZE,
+            .y = state->snake[i].y * GRID_SIZE
+        });
+    }
+    
+    // Register events (4 buttons: Cancel, Ok, North, South)
+    panel_onEvent(EventNameKeysChanged | KeyCancel | KeyOk | KeyNorth | KeySouth, keyChanged, state);
     panel_onEvent(EventNameRenderScene, render, state);
     
     return 0;

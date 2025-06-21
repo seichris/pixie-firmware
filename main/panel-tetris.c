@@ -236,15 +236,24 @@ static void keyChanged(EventPayload event, void *_state) {
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
-    // Handle South button hold-to-exit
-    if (event.props.keys.down & KeySouth) {
-        if (state->southHoldStart == 0) {
-            state->southHoldStart = ticks();
+    Keys keys = event.props.keys.down;
+    
+    // Standardized controls:
+    // Button 1 (KeyCancel) = Primary action (rotate piece)
+    // Button 2 (KeyOk) = Pause/Exit (hold 1s) 
+    // Button 3 (KeyNorth) = Up/Right movement (90° counter-clockwise)
+    // Button 4 (KeySouth) = Down/Left movement
+    
+    static uint32_t okHoldStart = 0;
+    
+    // Handle Ok button hold-to-exit, short press for pause
+    if (event.props.keys.down & KeyOk) {
+        if (okHoldStart == 0) {
+            okHoldStart = ticks();
         }
     } else {
-        // South button released
-        if (state->southHoldStart > 0) {
-            uint32_t holdDuration = ticks() - state->southHoldStart;
+        if (okHoldStart > 0) {
+            uint32_t holdDuration = ticks() - okHoldStart;
             if (holdDuration > 1000) { // 1 second hold
                 panel_pop();
                 return;
@@ -254,13 +263,13 @@ static void keyChanged(EventPayload event, void *_state) {
                     state->paused = !state->paused;
                 }
             }
-            state->southHoldStart = 0;
+            okHoldStart = 0;
         }
     }
     
     if (state->gameOver) {
-        if (event.props.keys.down & KeyNorth) {
-            // Reset game with North button
+        if (event.props.keys.down & KeyCancel) {
+            // Reset game with Cancel button
             memset(state->grid, 0, sizeof(state->grid));
             state->score = 0;
             state->lines = 0;
@@ -279,30 +288,26 @@ static void keyChanged(EventPayload event, void *_state) {
     
     if (state->paused) return;
     
-    // Universal control scheme
-    // West = Left movement
-    if (event.props.keys.down & KeyWest) {
-        if (!checkCollision(state, state->pieceX - 1, state->pieceY, state->pieceRotation)) {
-            state->pieceX--;
-        }
-    } 
-    // East = Right movement
-    else if (event.props.keys.down & KeyEast) {
-        if (!checkCollision(state, state->pieceX + 1, state->pieceY, state->pieceRotation)) {
-            state->pieceX++;
-        }
-    } 
-    // North = Action (rotate)
-    else if (event.props.keys.down & KeyNorth) {
+    // Button 1 (Cancel) = Primary action (rotate piece)
+    if (event.props.keys.down & KeyCancel) {
         int newRotation = (state->pieceRotation + 1) % 4;
         if (!checkCollision(state, state->pieceX, state->pieceY, newRotation)) {
             state->pieceRotation = newRotation;
         }
     }
-    // OK = Soft drop
-    else if (event.props.keys.down & KeyOk) {
-        if (!checkCollision(state, state->pieceX, state->pieceY + 1, state->pieceRotation)) {
-            state->pieceY++;
+    
+    // 90° counter-clockwise directional controls (like Le Space)
+    // Button 3 (North) = Right movement (in 90° rotated space)
+    if (event.props.keys.down & KeyNorth) {
+        if (!checkCollision(state, state->pieceX + 1, state->pieceY, state->pieceRotation)) {
+            state->pieceX++;
+        }
+    }
+    
+    // Button 4 (South) = Left movement (in 90° rotated space)
+    if (event.props.keys.down & KeySouth) {
+        if (!checkCollision(state, state->pieceX - 1, state->pieceY, state->pieceRotation)) {
+            state->pieceX--;
         }
     }
 }
@@ -356,29 +361,29 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     TetrisState *state = _state;
     state->scene = scene;
     
-    // Create game area background
+    // Create game area background - positioned on right side near buttons
     FfxNode gameArea = ffx_scene_createBox(scene, ffx_size(BOARD_WIDTH * GRID_SIZE, BOARD_HEIGHT * GRID_SIZE));
     ffx_sceneBox_setColor(gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, gameArea);
-    ffx_sceneNode_setPosition(gameArea, (FfxPoint){ .x = 20, .y = 20 });
+    ffx_sceneNode_setPosition(gameArea, (FfxPoint){ .x = 140, .y = 20 }); // Right side
     
-    // Create score labels
+    // Create score labels - positioned on left side
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontSmall, "Score: 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
-    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 140, .y = 30 });
+    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
     
     state->linesLabel = ffx_scene_createLabel(scene, FfxFontSmall, "Lines: 0");
     ffx_sceneGroup_appendChild(node, state->linesLabel);
-    ffx_sceneNode_setPosition(state->linesLabel, (FfxPoint){ .x = 140, .y = 50 });
+    ffx_sceneNode_setPosition(state->linesLabel, (FfxPoint){ .x = 10, .y = 50 });
     
-    // Create board blocks
+    // Create board blocks - positioned to match game area
     for (int y = 0; y < BOARD_HEIGHT; y++) {
         for (int x = 0; x < BOARD_WIDTH; x++) {
             state->board[y][x] = ffx_scene_createBox(scene, ffx_size(GRID_SIZE-1, GRID_SIZE-1));
             ffx_sceneBox_setColor(state->board[y][x], COLOR_BLACK);
             ffx_sceneGroup_appendChild(node, state->board[y][x]);
             ffx_sceneNode_setPosition(state->board[y][x], (FfxPoint){ 
-                .x = 20 + x * GRID_SIZE, 
+                .x = 140 + x * GRID_SIZE, // Match game area x position
                 .y = 20 + y * GRID_SIZE 
             });
         }
@@ -402,8 +407,8 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
     ffx_sceneLabel_setText(state->linesLabel, state->linesText);
     
-    // Register events
-    panel_onEvent(EventNameKeysChanged | KeyNorth | KeySouth | KeyEast | KeyWest | KeyOk, keyChanged, state);
+    // Register events (4 buttons: Cancel, Ok, North, South)
+    panel_onEvent(EventNameKeysChanged | KeyCancel | KeyOk | KeyNorth | KeySouth, keyChanged, state);
     panel_onEvent(EventNameRenderScene, render, state);
     
     return 0;
