@@ -7,6 +7,10 @@
 #include "./panel-gifs.h"
 #include "./panel-menu.h"
 #include "./panel-space.h"
+#include "./panel-wallet.h"
+#include "./panel-snake.h"
+#include "./panel-tetris.h"
+#include "./panel-pong.h"
 
 #include "images/image-arrow.h"
 
@@ -33,6 +37,9 @@ static void keyChanged(EventPayload event, void *_app) {
                 case 2:
                     pushPanelSpace(NULL);
                     break;
+                case 3:
+                    pushPanelWallet(NULL);
+                    break;
             }
             return;
         case KeyNorth:
@@ -40,7 +47,7 @@ static void keyChanged(EventPayload event, void *_app) {
             app->cursor--;
             break;
         case KeySouth:
-            if (app->cursor == 2) { return; }
+            if (app->cursor == 3) { return; }
             app->cursor++;
             break;
         default:
@@ -75,6 +82,10 @@ static int _init(FfxScene scene, FfxNode node, void *_app, void *arg) {
     text = ffx_scene_createLabel(scene, FfxFontLarge, "Le Space");
     ffx_sceneGroup_appendChild(node, text);
     ffx_sceneNode_setPosition(text, (FfxPoint){ .x = 70, .y = 143 });
+
+    text = ffx_scene_createLabel(scene, FfxFontLarge, "Wallet");
+    ffx_sceneGroup_appendChild(node, text);
+    ffx_sceneNode_setPosition(text, (FfxPoint){ .x = 70, .y = 183 });
 
     FfxNode cursor = ffx_scene_createImage(scene, image_arrow,
       sizeof(image_arrow));
