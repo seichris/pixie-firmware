@@ -48,22 +48,62 @@ static void drawTimingPattern(QRCode *qr) {
 }
 
 static void encodeData(QRCode *qr, const char *data) {
-    // Simple data encoding - create pattern based on data hash
+    // Create a more realistic QR pattern with format info and data modules
     uint32_t hash = 0;
     const char *p = data;
     while (*p) {
         hash = hash * 31 + *p++;
     }
     
-    // Fill data area with pattern based on hash
-    for (int y = 9; y < qr->size - 8; y++) {
-        for (int x = 9; x < qr->size - 8; x++) {
-            // Skip timing patterns
-            if (x == 6 || y == 6) continue;
+    // Fill format information areas (like real QR codes)
+    // Top-left format info (around top-left finder)
+    for (int i = 0; i < 9; i++) {
+        if (i != 6) { // Skip timing pattern
+            setModule(qr, 8, i, (hash >> i) & 1);
+            setModule(qr, i, 8, (hash >> (i + 1)) & 1);
+        }
+    }
+    
+    // Top-right format info
+    for (int i = 0; i < 7; i++) {
+        setModule(qr, qr->size - 1 - i, 8, (hash >> (i + 2)) & 1);
+    }
+    
+    // Bottom-left format info
+    for (int i = 0; i < 7; i++) {
+        setModule(qr, 8, qr->size - 7 + i, (hash >> (i + 3)) & 1);
+    }
+    
+    // Dark module (required)
+    setModule(qr, 8, qr->size - 8, true);
+    
+    // Fill data area with a more structured pattern
+    for (int y = 0; y < qr->size; y++) {
+        for (int x = 0; x < qr->size; x++) {
+            // Skip already filled areas
+            if ((x < 9 && y < 9) ||                    // Top-left finder + format
+                (x >= qr->size - 8 && y < 9) ||       // Top-right finder + format
+                (x < 9 && y >= qr->size - 8) ||       // Bottom-left finder + format
+                (x == 6 || y == 6) ||                 // Timing patterns
+                (x == 8 && y < qr->size - 7) ||       // Format info column
+                (y == 8 && x < qr->size - 7)) {       // Format info row
+                continue;
+            }
             
-            // Create pattern based on position and hash
-            uint32_t pattern = (hash ^ (x * 17) ^ (y * 23)) & 0xFF;
-            setModule(qr, x, y, (pattern & 1) == 1);
+            // Create data pattern based on position and hash
+            // Use both coordinates to create more variation
+            uint32_t posHash = hash;
+            posHash ^= (x * 7) ^ (y * 11);
+            posHash ^= ((x + y) * 3);
+            
+            // Create alternating regions for better visual structure
+            int region = ((x / 4) + (y / 4)) % 4;
+            posHash ^= region * 17;
+            
+            // ~50% fill with some spatial correlation
+            bool value = (posHash % 7) < 3;  // 3/7 ≈ 43% fill rate
+            
+            setModule(qr, x, y, value);
         }
     }
 }

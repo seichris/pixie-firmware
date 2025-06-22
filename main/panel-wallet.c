@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <esp_random.h>
+#include <esp_task_wdt.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "firefly-scene.h"
 #include "firefly-crypto.h"
@@ -50,10 +53,10 @@ static void showQRCode(WalletState *state) {
     ffx_sceneNode_setPosition(state->nodeAddress1, (FfxPoint){ .x = -300, .y = 0 });
     ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = -300, .y = 0 });
     
-    // Show QR modules (full screen size)
-    int moduleSize = 18;  // Large 18x18 pixels per module for full screen
-    int startX = 5;       // Start near left edge  
-    int startY = 5;       // Start near top edge
+    // Show QR modules (smaller size to fit screen properly)
+    int moduleSize = 10;  // Smaller 10x10 pixels per module (about 45% reduction from 18)
+    int startX = 20;      // Center horizontally 
+    int startY = 20;      // Center vertically
     
     printf("[wallet] Displaying QR modules at startX=%d, startY=%d\n", startX, startY);
     
@@ -112,18 +115,44 @@ static void keyChanged(EventPayload event, void *_state) {
     
     if (keys & KeyCancel) {
         // Primary action - generate new wallet
+        printf("[wallet] Starting key generation...\n");
+        
+        // Reset watchdog before starting
+        esp_task_wdt_reset();
+        
         esp_fill_random(state->privateKey, FFX_PRIVKEY_LENGTH);
         
-        // Compute public key
+        // Longer yield to prevent watchdog timeout during crypto operations
+        vTaskDelay(pdMS_TO_TICKS(10));
+        esp_task_wdt_reset();
+        
+        printf("[wallet] Computing public key...\n");
+        // Compute public key with watchdog management
         if (!ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
+            printf("[wallet] Public key computation failed!\n");
             return;
         }
         
+        // Reset watchdog and yield
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(10));
+        
+        printf("[wallet] Computing address...\n");
         // Compute address
         ffx_eth_computeAddress(state->publicKey, state->address);
         
+        // Reset watchdog and yield
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(10));
+        
+        printf("[wallet] Computing checksum...\n");
         // Get checksum address string
         ffx_eth_checksumAddress(state->address, state->addressStr);
+        
+        // Final watchdog reset
+        esp_task_wdt_reset();
+        
+        printf("[wallet] Key generation complete!\n");
         
         // Update display - force back to address view
         state->showingQR = false;

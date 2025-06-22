@@ -8,7 +8,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define QR_SIZE 13  // Smaller QR code to prevent memory issues  
+#define QR_SIZE 21  // Standard QR code version 1 size
 #define QR_MODULES (QR_SIZE * QR_SIZE)
 
 // Simple QR code structure

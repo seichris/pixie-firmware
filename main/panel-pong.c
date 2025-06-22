@@ -15,8 +15,8 @@
 #define PADDLE_WIDTH 4
 #define PADDLE_HEIGHT 30
 #define BALL_SIZE 6
-#define GAME_WIDTH 180  // Smaller to leave room for positioning
-#define GAME_HEIGHT 200
+#define GAME_WIDTH 200  // Rotated: horizontal layout, wider
+#define GAME_HEIGHT 120 // Rotated: horizontal layout, shorter
 #define PADDLE_SPEED 3
 #define BALL_SPEED 2
 
@@ -28,10 +28,11 @@ typedef struct PongState {
     FfxNode ball;
     FfxNode scoreLabel;
     FfxNode centerLine;
+    FfxNode pausedLabel;
     
-    // Game state
-    float playerPaddleX;   // Player paddle X position
-    float aiPaddleX;       // AI paddle X position
+    // Game state (rotated: paddles move vertically)
+    float playerPaddleY;   // Player paddle Y position (right side)
+    float aiPaddleY;       // AI paddle Y position (left side)
     float ballX, ballY;
     float ballVelX, ballVelY;
     int playerScore, aiScore;
@@ -39,6 +40,7 @@ typedef struct PongState {
     bool paused;
     Keys keys;
     uint32_t southHoldStart;
+    uint32_t gameStartTime;
     char scoreText[32];
 } PongState;
 
@@ -46,13 +48,12 @@ static void resetBall(PongState *state) {
     state->ballX = GAME_WIDTH / 2;
     state->ballY = GAME_HEIGHT / 2;
     
-    // Random direction but not too steep for vertical play
+    // Random direction but not too steep for horizontal play
     float angle = (rand() % 60 - 30) * M_PI / 180.0; // -30 to +30 degrees
-    angle += M_PI / 2; // Make it primarily vertical
-    if (rand() % 2) angle += M_PI; // Sometimes go up instead of down
+    if (rand() % 2) angle += M_PI; // Sometimes go left instead of right
     
-    state->ballVelX = BALL_SPEED * cos(angle);
-    state->ballVelY = BALL_SPEED * sin(angle);
+    state->ballVelX = BALL_SPEED * cos(angle);  // Primarily horizontal
+    state->ballVelY = BALL_SPEED * sin(angle);  // Some vertical component
 }
 
 static void updateGame(PongState *state) {
@@ -66,85 +67,87 @@ static void updateGame(PongState *state) {
     
     float speed = (state->keys & KeyCancel) ? PADDLE_SPEED * 2 : PADDLE_SPEED;
     
-    // 90° counter-clockwise directional controls (like Le Space)
-    // Button 3 (North) = Right movement (in 90° rotated space)
+    // Rotated controls: paddles move up/down
+    // Button 3 (North) = Move up
     if (state->keys & KeyNorth) {
-        state->playerPaddleX += speed;
-        if (state->playerPaddleX > GAME_WIDTH - PADDLE_HEIGHT) {
-            state->playerPaddleX = GAME_WIDTH - PADDLE_HEIGHT;
+        state->playerPaddleY -= speed;
+        if (state->playerPaddleY < 0) {
+            state->playerPaddleY = 0;
         }
     }
     
-    // Button 4 (South) = Left movement (in 90° rotated space)
+    // Button 4 (South) = Move down
     if (state->keys & KeySouth) {
-        state->playerPaddleX -= speed;
-        if (state->playerPaddleX < 0) state->playerPaddleX = 0;
+        state->playerPaddleY += speed;
+        if (state->playerPaddleY > GAME_HEIGHT - PADDLE_HEIGHT) {
+            state->playerPaddleY = GAME_HEIGHT - PADDLE_HEIGHT;
+        }
     }
     
-    // Simple AI for top paddle
-    float paddleCenter = state->aiPaddleX + PADDLE_HEIGHT / 2;
-    float ballCenter = state->ballX + BALL_SIZE / 2;
+    // Simple AI for left paddle (follows ball vertically)
+    float paddleCenter = state->aiPaddleY + PADDLE_HEIGHT / 2;
+    float ballCenter = state->ballY + BALL_SIZE / 2;
     
     if (paddleCenter < ballCenter - 5) {
-        state->aiPaddleX += PADDLE_SPEED * 0.8; // AI slightly slower
-        if (state->aiPaddleX > GAME_WIDTH - PADDLE_HEIGHT) {
-            state->aiPaddleX = GAME_WIDTH - PADDLE_HEIGHT;
+        state->aiPaddleY += PADDLE_SPEED * 0.8; // AI slightly slower
+        if (state->aiPaddleY > GAME_HEIGHT - PADDLE_HEIGHT) {
+            state->aiPaddleY = GAME_HEIGHT - PADDLE_HEIGHT;
         }
     } else if (paddleCenter > ballCenter + 5) {
-        state->aiPaddleX -= PADDLE_SPEED * 0.8;
-        if (state->aiPaddleX < 0) state->aiPaddleX = 0;
+        state->aiPaddleY -= PADDLE_SPEED * 0.8;
+        if (state->aiPaddleY < 0) state->aiPaddleY = 0;
     }
     
     // Move ball
     state->ballX += state->ballVelX;
     state->ballY += state->ballVelY;
     
-    // Ball collision with left/right walls
-    if (state->ballX <= 0 || state->ballX >= GAME_WIDTH - BALL_SIZE) {
-        state->ballVelX = -state->ballVelX;
-        if (state->ballX <= 0) state->ballX = 0;
-        if (state->ballX >= GAME_WIDTH - BALL_SIZE) state->ballX = GAME_WIDTH - BALL_SIZE;
+    // Ball collision with top/bottom walls
+    if (state->ballY <= 0 || state->ballY >= GAME_HEIGHT - BALL_SIZE) {
+        state->ballVelY = -state->ballVelY;
+        if (state->ballY <= 0) state->ballY = 0;
+        if (state->ballY >= GAME_HEIGHT - BALL_SIZE) state->ballY = GAME_HEIGHT - BALL_SIZE;
     }
     
-    // Ball collision with player paddle (bottom)
-    if (state->ballY + BALL_SIZE >= GAME_HEIGHT - PADDLE_WIDTH && 
-        state->ballX + BALL_SIZE >= state->playerPaddleX && 
-        state->ballX <= state->playerPaddleX + PADDLE_HEIGHT) {
+    // Ball collision with player paddle (right side)
+    if (state->ballX + BALL_SIZE >= GAME_WIDTH - PADDLE_WIDTH && 
+        state->ballY + BALL_SIZE >= state->playerPaddleY && 
+        state->ballY <= state->playerPaddleY + PADDLE_HEIGHT) {
         
-        state->ballVelY = -state->ballVelY;
-        state->ballY = GAME_HEIGHT - PADDLE_WIDTH - BALL_SIZE;
+        state->ballVelX = -state->ballVelX;
+        state->ballX = GAME_WIDTH - PADDLE_WIDTH - BALL_SIZE;
         
         // Add some english based on where ball hits paddle
-        float hitPos = (state->ballX + BALL_SIZE/2 - state->playerPaddleX - PADDLE_HEIGHT/2) / (PADDLE_HEIGHT/2);
-        state->ballVelX += hitPos * 0.5;
+        float hitPos = (state->ballY + BALL_SIZE/2 - state->playerPaddleY - PADDLE_HEIGHT/2) / (PADDLE_HEIGHT/2);
+        state->ballVelY += hitPos * 0.5;
         
         // Limit ball speed
-        if (fabs(state->ballVelX) > BALL_SPEED * 1.5) {
-            state->ballVelX = (state->ballVelX > 0) ? BALL_SPEED * 1.5 : -BALL_SPEED * 1.5;
+        if (fabs(state->ballVelY) > BALL_SPEED * 1.5) {
+            state->ballVelY = (state->ballVelY > 0) ? BALL_SPEED * 1.5 : -BALL_SPEED * 1.5;
         }
     }
     
-    // Ball collision with AI paddle (top)
-    if (state->ballY <= PADDLE_WIDTH && 
-        state->ballX + BALL_SIZE >= state->aiPaddleX && 
-        state->ballX <= state->aiPaddleX + PADDLE_HEIGHT) {
+    // Ball collision with AI paddle (left side)
+    if (state->ballX <= PADDLE_WIDTH && 
+        state->ballY + BALL_SIZE >= state->aiPaddleY && 
+        state->ballY <= state->aiPaddleY + PADDLE_HEIGHT) {
         
-        state->ballVelY = -state->ballVelY;
-        state->ballY = PADDLE_WIDTH;
+        state->ballVelX = -state->ballVelX;
+        state->ballX = PADDLE_WIDTH;
         
         // Add some english
-        float hitPos = (state->ballX + BALL_SIZE/2 - state->aiPaddleX - PADDLE_HEIGHT/2) / (PADDLE_HEIGHT/2);
-        state->ballVelX += hitPos * 0.5;
+        float hitPos = (state->ballY + BALL_SIZE/2 - state->aiPaddleY - PADDLE_HEIGHT/2) / (PADDLE_HEIGHT/2);
+        state->ballVelY += hitPos * 0.5;
         
         // Limit ball speed
-        if (fabs(state->ballVelX) > BALL_SPEED * 1.5) {
-            state->ballVelX = (state->ballVelX > 0) ? BALL_SPEED * 1.5 : -BALL_SPEED * 1.5;
+        if (fabs(state->ballVelY) > BALL_SPEED * 1.5) {
+            state->ballVelY = (state->ballVelY > 0) ? BALL_SPEED * 1.5 : -BALL_SPEED * 1.5;
         }
     }
     
-    // Ball goes off top/bottom edges (scoring)
-    if (state->ballY < -BALL_SIZE) {
-        state->playerScore++;
+    // Ball goes off left/right edges (scoring)
+    if (state->ballX < -BALL_SIZE) {
+        state->playerScore++;  // Player scores when ball goes off left (AI side)
         resetBall(state);
         snprintf(state->scoreText, sizeof(state->scoreText), "Player %d - AI %d", state->playerScore, state->aiScore);
         ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
@@ -152,8 +155,8 @@ static void updateGame(PongState *state) {
         if (state->playerScore >= 7) {
             state->gameOver = true;
         }
-    } else if (state->ballY > GAME_HEIGHT) {
-        state->aiScore++;
+    } else if (state->ballX > GAME_WIDTH) {
+        state->aiScore++;  // AI scores when ball goes off right (player side)
         resetBall(state);
         snprintf(state->scoreText, sizeof(state->scoreText), "Player %d - AI %d", state->playerScore, state->aiScore);
         ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
@@ -165,20 +168,20 @@ static void updateGame(PongState *state) {
 }
 
 static void updateVisuals(PongState *state) {
-    // Apply game area offset (x=40, y=20)
-    int offsetX = 40;
-    int offsetY = 20;
+    // Apply game area offset for rotated layout
+    int offsetX = 20;
+    int offsetY = 60;
     
-    // Player paddle at bottom
+    // Player paddle at right side
     ffx_sceneNode_setPosition(state->playerPaddle, (FfxPoint){ 
-        .x = offsetX + (int)state->playerPaddleX, 
-        .y = offsetY + GAME_HEIGHT - PADDLE_WIDTH
+        .x = offsetX + GAME_WIDTH - PADDLE_WIDTH,
+        .y = offsetY + (int)state->playerPaddleY
     });
     
-    // AI paddle at top
+    // AI paddle at left side
     ffx_sceneNode_setPosition(state->aiPaddle, (FfxPoint){ 
-        .x = offsetX + (int)state->aiPaddleX, 
-        .y = offsetY
+        .x = offsetX,
+        .y = offsetY + (int)state->aiPaddleY
     });
     
     ffx_sceneNode_setPosition(state->ball, (FfxPoint){ 
@@ -192,13 +195,12 @@ static void keyChanged(EventPayload event, void *_state) {
     printf("[pong] keyChanged called! keys=0x%04x\n", event.props.keys.down);
     
     // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    static uint32_t gameStartTime = 0;
-    if (gameStartTime == 0) {
-        gameStartTime = ticks();
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
         printf("[pong] Game start time set, ignoring keys for 500ms\n");
         return;
     }
-    if (ticks() - gameStartTime < 500) {
+    if (ticks() - state->gameStartTime < 500) {
         printf("[pong] Ignoring keys due to startup delay\n");
         return;
     }
@@ -226,6 +228,12 @@ static void keyChanged(EventPayload event, void *_state) {
                 // Short press - pause/unpause
                 if (!state->gameOver) {
                     state->paused = !state->paused;
+                    // Show/hide paused label
+                    if (state->paused) {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = 85, .y = 120 });
+                    } else {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 });
+                    }
                 }
             }
             okHoldStart = 0;
@@ -237,8 +245,8 @@ static void keyChanged(EventPayload event, void *_state) {
             // Reset game with Cancel button
             state->playerScore = 0;
             state->aiScore = 0;
-            state->playerPaddleX = GAME_WIDTH / 2 - PADDLE_HEIGHT / 2;
-            state->aiPaddleX = GAME_WIDTH / 2 - PADDLE_HEIGHT / 2;
+            state->playerPaddleY = GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2;
+            state->aiPaddleY = GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2;
             state->gameOver = false;
             state->paused = false;
             resetBall(state);
@@ -271,31 +279,36 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     PongState *state = _state;
     state->scene = scene;
     
-    // Create game area background - positioned on right side near buttons
+    // Create game area background - rotated 90° CCW, horizontal layout
     state->gameArea = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, GAME_HEIGHT));
     ffx_sceneBox_setColor(state->gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, state->gameArea);
-    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 40, .y = 20 }); // Right side positioning
+    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 20, .y = 60 }); // Centered horizontally
     
-    // Create center line (horizontal for vertical play)
-    state->centerLine = ffx_scene_createBox(scene, ffx_size(GAME_WIDTH, 2));
+    // Create center line (vertical for horizontal play)
+    state->centerLine = ffx_scene_createBox(scene, ffx_size(2, GAME_HEIGHT));
     ffx_sceneBox_setColor(state->centerLine, ffx_color_rgb(128, 128, 128));
     ffx_sceneGroup_appendChild(node, state->centerLine);
-    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 40, .y = 20 + GAME_HEIGHT/2 - 1 });
+    ffx_sceneNode_setPosition(state->centerLine, (FfxPoint){ .x = 20 + GAME_WIDTH/2 - 1, .y = 60 });
     
-    // Create score label - positioned on left side
+    // Create score label - positioned on left side for visibility
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontMedium, "Player 0 - AI 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
     ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
     
-    // Create paddles (horizontal for vertical play)
-    // Player paddle (bottom)
-    state->playerPaddle = ffx_scene_createBox(scene, ffx_size(PADDLE_HEIGHT, PADDLE_WIDTH));
+    // Create paused label - centered on screen
+    state->pausedLabel = ffx_scene_createLabel(scene, FfxFontLarge, "PAUSED");
+    ffx_sceneGroup_appendChild(node, state->pausedLabel);
+    ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 }); // Hidden initially
+    
+    // Create paddles (vertical for horizontal play)
+    // Player paddle (right side)
+    state->playerPaddle = ffx_scene_createBox(scene, ffx_size(PADDLE_WIDTH, PADDLE_HEIGHT));
     ffx_sceneBox_setColor(state->playerPaddle, ffx_color_rgb(255, 255, 255));
     ffx_sceneGroup_appendChild(node, state->playerPaddle);
     
-    // AI paddle (top)
-    state->aiPaddle = ffx_scene_createBox(scene, ffx_size(PADDLE_HEIGHT, PADDLE_WIDTH));
+    // AI paddle (left side)
+    state->aiPaddle = ffx_scene_createBox(scene, ffx_size(PADDLE_WIDTH, PADDLE_HEIGHT));
     ffx_sceneBox_setColor(state->aiPaddle, ffx_color_rgb(255, 255, 255));
     ffx_sceneGroup_appendChild(node, state->aiPaddle);
     
@@ -307,12 +320,13 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     // Initialize game state
     state->playerScore = 0;
     state->aiScore = 0;
-    state->playerPaddleX = GAME_WIDTH / 2 - PADDLE_HEIGHT / 2;
-    state->aiPaddleX = GAME_WIDTH / 2 - PADDLE_HEIGHT / 2;
+    state->playerPaddleY = GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2;  // Center vertically
+    state->aiPaddleY = GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2;      // Center vertically  
     state->gameOver = false;
     state->paused = false;
     state->keys = 0;
     state->southHoldStart = 0;
+    state->gameStartTime = 0;
     
     resetBall(state);
     snprintf(state->scoreText, sizeof(state->scoreText), "Player %d - AI %d", state->playerScore, state->aiScore);

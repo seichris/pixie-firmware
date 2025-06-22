@@ -12,8 +12,8 @@
 #include "utils.h"
 
 #define GRID_SIZE 10
-#define GRID_WIDTH 20
-#define GRID_HEIGHT 20
+#define GRID_WIDTH 20  // Horizontal width (for Le Space style layout)
+#define GRID_HEIGHT 16 // Vertical height (for Le Space style layout)
 #define MAX_SNAKE_LENGTH 50
 
 typedef enum Direction {
@@ -33,6 +33,7 @@ typedef struct SnakeState {
     FfxNode snakeBody[MAX_SNAKE_LENGTH];
     FfxNode food;
     FfxNode scoreLabel;
+    FfxNode pausedLabel;
     
     Point snake[MAX_SNAKE_LENGTH];
     int snakeLength;
@@ -47,6 +48,7 @@ typedef struct SnakeState {
     
     Keys currentKeys;
     uint32_t southHoldStart;
+    uint32_t gameStartTime;
 } SnakeState;
 
 static void spawnFood(SnakeState *state) {
@@ -66,8 +68,8 @@ static void spawnFood(SnakeState *state) {
     } while (true);
     
     ffx_sceneNode_setPosition(state->food, (FfxPoint){
-        .x = state->foodPos.x * GRID_SIZE,
-        .y = state->foodPos.y * GRID_SIZE
+        .x = 35 + state->foodPos.x * GRID_SIZE,  // Add game area offset
+        .y = 40 + state->foodPos.y * GRID_SIZE   // Add game area offset
     });
 }
 
@@ -124,11 +126,11 @@ static void moveSnake(SnakeState *state) {
         ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
     }
     
-    // Update visual positions
+    // Update visual positions (add game area offset)
     for (int i = 0; i < state->snakeLength; i++) {
         ffx_sceneNode_setPosition(state->snakeBody[i], (FfxPoint){
-            .x = state->snake[i].x * GRID_SIZE,
-            .y = state->snake[i].y * GRID_SIZE
+            .x = 35 + state->snake[i].x * GRID_SIZE,  // Add game area offset
+            .y = 40 + state->snake[i].y * GRID_SIZE   // Add game area offset
         });
     }
     
@@ -148,13 +150,12 @@ static void keyChanged(EventPayload event, void *_state) {
     Keys keys = event.props.keys.down;
     
     // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    static uint32_t gameStartTime = 0;
-    if (gameStartTime == 0) {
-        gameStartTime = ticks();
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
         printf("[snake] Game start time set, ignoring keys for 500ms\n");
         return;
     }
-    if (ticks() - gameStartTime < 500) {
+    if (ticks() - state->gameStartTime < 500) {
         printf("[snake] Ignoring keys due to startup delay\n");
         return;
     }
@@ -182,6 +183,12 @@ static void keyChanged(EventPayload event, void *_state) {
                 // Short press - pause/unpause
                 if (!state->gameOver) {
                     state->paused = !state->paused;
+                    // Show/hide paused label
+                    if (state->paused) {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = 85, .y = 120 });
+                    } else {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 });
+                    }
                 }
             }
             okHoldStart = 0;
@@ -192,11 +199,11 @@ static void keyChanged(EventPayload event, void *_state) {
         if (event.props.keys.down & KeyCancel) {
             // Reset game with Cancel button
             state->snakeLength = 3;
-            state->snake[0] = (Point){10, 10}; // Head in center
-            state->snake[1] = (Point){9, 10};  // Body to the left  
-            state->snake[2] = (Point){8, 10};  // Tail further left
-            state->direction = DIR_RIGHT;      // Initially moving right
-            state->nextDirection = DIR_RIGHT;
+            state->snake[0] = (Point){GRID_WIDTH-3, GRID_HEIGHT/2}; // Head on right side
+            state->snake[1] = (Point){GRID_WIDTH-2, GRID_HEIGHT/2}; // Body further right  
+            state->snake[2] = (Point){GRID_WIDTH-1, GRID_HEIGHT/2}; // Tail at right edge
+            state->direction = DIR_LEFT;       // Initially moving left
+            state->nextDirection = DIR_LEFT;
             state->score = 0;
             state->gameOver = false;
             state->paused = false;
@@ -204,11 +211,11 @@ static void keyChanged(EventPayload event, void *_state) {
             snprintf(state->scoreText, sizeof(state->scoreText), "Score: %d", state->score);
             ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
             
-            // Reset visual positions for snake segments
+            // Reset visual positions for snake segments (add game area offset)
             for (int i = 0; i < state->snakeLength; i++) {
                 ffx_sceneNode_setPosition(state->snakeBody[i], (FfxPoint){
-                    .x = state->snake[i].x * GRID_SIZE,
-                    .y = state->snake[i].y * GRID_SIZE
+                    .x = 35 + state->snake[i].x * GRID_SIZE,  // Add game area offset
+                    .y = 40 + state->snake[i].y * GRID_SIZE   // Add game area offset
                 });
             }
         }
@@ -217,26 +224,24 @@ static void keyChanged(EventPayload event, void *_state) {
     
     if (state->paused) return;
     
-    // 90° counter-clockwise directional controls (like Le Space)
-    // Button 3 (North) = Up/Right movement 
+    // Simple directional controls
+    // Button 3 (North) = Turn Right (clockwise)
     if (event.props.keys.down & KeyNorth) {
-        if (state->direction == DIR_UP || state->direction == DIR_DOWN) {
-            // Currently moving vertically, change to right
-            if (state->direction != DIR_LEFT) state->nextDirection = DIR_RIGHT;
-        } else {
-            // Currently moving horizontally, change to up
-            if (state->direction != DIR_DOWN) state->nextDirection = DIR_UP;
+        switch (state->direction) {
+            case DIR_UP:    state->nextDirection = DIR_RIGHT; break;
+            case DIR_RIGHT: state->nextDirection = DIR_DOWN;  break;
+            case DIR_DOWN:  state->nextDirection = DIR_LEFT;  break;
+            case DIR_LEFT:  state->nextDirection = DIR_UP;    break;
         }
     }
     
-    // Button 4 (South) = Down/Left movement
+    // Button 4 (South) = Turn Left (counter-clockwise)
     if (event.props.keys.down & KeySouth) {
-        if (state->direction == DIR_UP || state->direction == DIR_DOWN) {
-            // Currently moving vertically, change to left
-            if (state->direction != DIR_RIGHT) state->nextDirection = DIR_LEFT;
-        } else {
-            // Currently moving horizontally, change to down  
-            if (state->direction != DIR_UP) state->nextDirection = DIR_DOWN;
+        switch (state->direction) {
+            case DIR_UP:    state->nextDirection = DIR_LEFT;  break;
+            case DIR_LEFT:  state->nextDirection = DIR_DOWN;  break;
+            case DIR_DOWN:  state->nextDirection = DIR_RIGHT; break;
+            case DIR_RIGHT: state->nextDirection = DIR_UP;    break;
         }
     }
     
@@ -280,16 +285,21 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     SnakeState *state = _state;
     state->scene = scene;
     
-    // Create game area background - positioned on right side near buttons
-    state->gameArea = ffx_scene_createBox(scene, ffx_size(200, 200));
+    // Create game area background - positioned like Le Space with controls on RIGHT
+    state->gameArea = ffx_scene_createBox(scene, ffx_size(200, 160));
     ffx_sceneBox_setColor(state->gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, state->gameArea);
-    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 30, .y = 20 });
+    ffx_sceneNode_setPosition(state->gameArea, (FfxPoint){ .x = 35, .y = 40 });
     
-    // Create score label - positioned on left side for clear visibility
+    // Create score label - positioned on left side for visibility
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontMedium, "Score: 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
     ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
+    
+    // Create paused label - centered on screen
+    state->pausedLabel = ffx_scene_createLabel(scene, FfxFontLarge, "PAUSED");
+    ffx_sceneGroup_appendChild(node, state->pausedLabel);
+    ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 }); // Hidden initially
     
     // Create snake body segments
     for (int i = 0; i < MAX_SNAKE_LENGTH; i++) {
@@ -304,29 +314,30 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneBox_setColor(state->food, ffx_color_rgb(255, 0, 0));
     ffx_sceneGroup_appendChild(node, state->food);
     
-    // Initialize game state - start in center
+    // Initialize game state - start on RIGHT side (90° counter-clockwise layout)
     state->snakeLength = 3;
-    state->snake[0] = (Point){10, 10}; // Head in center
-    state->snake[1] = (Point){9, 10};  // Body to the left
-    state->snake[2] = (Point){8, 10};  // Tail further left
-    state->direction = DIR_RIGHT;      // Initially moving right
-    state->nextDirection = DIR_RIGHT;
+    state->snake[0] = (Point){GRID_WIDTH-3, GRID_HEIGHT/2}; // Head on right side
+    state->snake[1] = (Point){GRID_WIDTH-2, GRID_HEIGHT/2}; // Body further right  
+    state->snake[2] = (Point){GRID_WIDTH-1, GRID_HEIGHT/2}; // Tail at right edge
+    state->direction = DIR_LEFT;       // Initially moving left (toward center)
+    state->nextDirection = DIR_LEFT;
     state->score = 0;
     state->gameOver = false;
     state->paused = false;
     state->lastMove = ticks();
     state->currentKeys = 0;
     state->southHoldStart = 0;
+    state->gameStartTime = 0;
     
     spawnFood(state);
     snprintf(state->scoreText, sizeof(state->scoreText), "Score: %d", state->score);
     ffx_sceneLabel_setText(state->scoreLabel, state->scoreText);
     
-    // Set initial visual positions for snake segments
+    // Set initial visual positions for snake segments (add game area offset)
     for (int i = 0; i < state->snakeLength; i++) {
         ffx_sceneNode_setPosition(state->snakeBody[i], (FfxPoint){
-            .x = state->snake[i].x * GRID_SIZE,
-            .y = state->snake[i].y * GRID_SIZE
+            .x = 35 + state->snake[i].x * GRID_SIZE,  // Add game area offset
+            .y = 40 + state->snake[i].y * GRID_SIZE   // Add game area offset
         });
     }
     

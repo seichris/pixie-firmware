@@ -13,8 +13,8 @@
 #include "utils.h"
 
 #define GRID_SIZE 10
-#define BOARD_WIDTH 10
-#define BOARD_HEIGHT 20
+#define BOARD_WIDTH 20  // Rotated: was height, now width  
+#define BOARD_HEIGHT 10 // Rotated: was width, now height
 #define PIECE_SIZE 4
 
 typedef enum PieceType {
@@ -34,6 +34,7 @@ typedef struct TetrisState {
     FfxNode board[BOARD_HEIGHT][BOARD_WIDTH];
     FfxNode scoreLabel;
     FfxNode linesLabel;
+    FfxNode pausedLabel;
     
     // Game board (0 = empty, 1-7 = filled)
     uint8_t grid[BOARD_HEIGHT][BOARD_WIDTH];
@@ -56,6 +57,7 @@ typedef struct TetrisState {
     
     Keys currentKeys;
     uint32_t southHoldStart;
+    uint32_t gameStartTime;
 } TetrisState;
 
 // Tetris piece definitions (4x4 grids, 4 rotations each)
@@ -128,8 +130,8 @@ static bool checkCollision(TetrisState *state, int x, int y, int rotation) {
                 int nx = x + px;
                 int ny = y + py;
                 
-                // Check bounds
-                if (nx < 0 || nx >= BOARD_WIDTH || ny >= BOARD_HEIGHT) {
+                // Check bounds (rotated: left edge is now the bottom)
+                if (nx < 0 || ny < 0 || ny >= BOARD_HEIGHT) {
                     return true;
                 }
                 
@@ -192,8 +194,8 @@ static int clearLines(TetrisState *state) {
 
 static void spawnPiece(TetrisState *state) {
     state->currentPiece = rand() % PIECE_COUNT;
-    state->pieceX = BOARD_WIDTH / 2 - 2;
-    state->pieceY = 0;
+    state->pieceX = BOARD_WIDTH - 1;      // Spawn from right side
+    state->pieceY = BOARD_HEIGHT / 2 - 2; // Center vertically
     state->pieceRotation = 0;
     
     if (checkCollision(state, state->pieceX, state->pieceY, state->pieceRotation)) {
@@ -240,13 +242,12 @@ static void keyChanged(EventPayload event, void *_state) {
     Keys keys = event.props.keys.down;
     
     // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    static uint32_t gameStartTime = 0;
-    if (gameStartTime == 0) {
-        gameStartTime = ticks();
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
         printf("[tetris] Game start time set, ignoring keys for 500ms\n");
         return;
     }
-    if (ticks() - gameStartTime < 500) {
+    if (ticks() - state->gameStartTime < 500) {
         printf("[tetris] Ignoring keys due to startup delay\n");
         return;
     }
@@ -274,6 +275,12 @@ static void keyChanged(EventPayload event, void *_state) {
                 // Short press - pause/unpause
                 if (!state->gameOver) {
                     state->paused = !state->paused;
+                    // Show/hide paused label
+                    if (state->paused) {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = 85, .y = 120 });
+                    } else {
+                        ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 });
+                    }
                 }
             }
             okHoldStart = 0;
@@ -309,18 +316,18 @@ static void keyChanged(EventPayload event, void *_state) {
         }
     }
     
-    // 90° counter-clockwise directional controls (like Le Space)
-    // Button 3 (North) = Right movement (in 90° rotated space)
+    // Rotated controls: pieces fall left, up/down movement for positioning
+    // Button 3 (North) = Move up
     if (event.props.keys.down & KeyNorth) {
-        if (!checkCollision(state, state->pieceX + 1, state->pieceY, state->pieceRotation)) {
-            state->pieceX++;
+        if (!checkCollision(state, state->pieceX, state->pieceY - 1, state->pieceRotation)) {
+            state->pieceY--;
         }
     }
     
-    // Button 4 (South) = Left movement (in 90° rotated space)
+    // Button 4 (South) = Move down  
     if (event.props.keys.down & KeySouth) {
-        if (!checkCollision(state, state->pieceX - 1, state->pieceY, state->pieceRotation)) {
-            state->pieceX--;
+        if (!checkCollision(state, state->pieceX, state->pieceY + 1, state->pieceRotation)) {
+            state->pieceY++;
         }
     }
 }
@@ -342,8 +349,8 @@ static void render(EventPayload event, void *_state) {
     }
     
     if (now - state->lastDrop > state->dropSpeed) {
-        if (!checkCollision(state, state->pieceX, state->pieceY + 1, state->pieceRotation)) {
-            state->pieceY++;
+        if (!checkCollision(state, state->pieceX - 1, state->pieceY, state->pieceRotation)) {
+            state->pieceX--;  // Move left in rotated layout
         } else {
             // Piece has landed
             placePiece(state);
@@ -374,30 +381,36 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     TetrisState *state = _state;
     state->scene = scene;
     
-    // Create game area background - positioned on right side near buttons
+    // Create game area background - rotated 90° CCW, horizontal layout
+    // Pieces fall from right to left, player controls on right
     FfxNode gameArea = ffx_scene_createBox(scene, ffx_size(BOARD_WIDTH * GRID_SIZE, BOARD_HEIGHT * GRID_SIZE));
     ffx_sceneBox_setColor(gameArea, COLOR_BLACK);
     ffx_sceneGroup_appendChild(node, gameArea);
-    ffx_sceneNode_setPosition(gameArea, (FfxPoint){ .x = 140, .y = 20 }); // Right side
+    ffx_sceneNode_setPosition(gameArea, (FfxPoint){ .x = 20, .y = 110 }); // Horizontal layout, bottom of screen
     
-    // Create score labels - positioned on left side
+    // Create score labels - positioned on left side for visibility
     state->scoreLabel = ffx_scene_createLabel(scene, FfxFontSmall, "Score: 0");
     ffx_sceneGroup_appendChild(node, state->scoreLabel);
-    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 30 });
+    ffx_sceneNode_setPosition(state->scoreLabel, (FfxPoint){ .x = 10, .y = 20 });
     
     state->linesLabel = ffx_scene_createLabel(scene, FfxFontSmall, "Lines: 0");
     ffx_sceneGroup_appendChild(node, state->linesLabel);
-    ffx_sceneNode_setPosition(state->linesLabel, (FfxPoint){ .x = 10, .y = 50 });
+    ffx_sceneNode_setPosition(state->linesLabel, (FfxPoint){ .x = 10, .y = 40 });
     
-    // Create board blocks - positioned to match game area
+    // Create paused label - centered on screen
+    state->pausedLabel = ffx_scene_createLabel(scene, FfxFontLarge, "PAUSED");
+    ffx_sceneGroup_appendChild(node, state->pausedLabel);
+    ffx_sceneNode_setPosition(state->pausedLabel, (FfxPoint){ .x = -300, .y = 120 }); // Hidden initially
+    
+    // Create board blocks - positioned to match rotated game area
     for (int y = 0; y < BOARD_HEIGHT; y++) {
         for (int x = 0; x < BOARD_WIDTH; x++) {
             state->board[y][x] = ffx_scene_createBox(scene, ffx_size(GRID_SIZE-1, GRID_SIZE-1));
             ffx_sceneBox_setColor(state->board[y][x], COLOR_BLACK);
             ffx_sceneGroup_appendChild(node, state->board[y][x]);
             ffx_sceneNode_setPosition(state->board[y][x], (FfxPoint){ 
-                .x = 140 + x * GRID_SIZE, // Match game area x position
-                .y = 20 + y * GRID_SIZE 
+                .x = 20 + x * GRID_SIZE, // Match game area x position (horizontal layout)
+                .y = 110 + y * GRID_SIZE 
             });
         }
     }
@@ -413,6 +426,7 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     state->lastDrop = ticks();
     state->currentKeys = 0;
     state->southHoldStart = 0;
+    state->gameStartTime = 0;
     
     spawnPiece(state);
     snprintf(state->scoreText, sizeof(state->scoreText), "Score: %d", state->score);
