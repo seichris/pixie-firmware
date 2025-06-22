@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #include "firefly-scene.h"
@@ -194,17 +195,6 @@ static void keyChanged(EventPayload event, void *_state) {
     PongState *state = _state;
     printf("[pong] keyChanged called! keys=0x%04x\n", event.props.keys.down);
     
-    // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    if (state->gameStartTime == 0) {
-        state->gameStartTime = ticks();
-        printf("[pong] Game start time set, ignoring keys for 500ms\n");
-        return;
-    }
-    if (ticks() - state->gameStartTime < 500) {
-        printf("[pong] Ignoring keys due to startup delay\n");
-        return;
-    }
-    
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (speed boost) 
     // Button 2 (KeyOk) = Pause/Exit (hold 1s)
@@ -212,6 +202,18 @@ static void keyChanged(EventPayload event, void *_state) {
     // Button 4 (KeySouth) = Down/Left movement
     
     static uint32_t okHoldStart = 0;
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
+        okHoldStart = 0; // Reset static variable when game restarts
+        printf("[pong] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - state->gameStartTime < 500) {
+        printf("[pong] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Handle Ok button hold-to-exit, short press for pause
     if (event.props.keys.down & KeyOk) {
@@ -277,6 +279,9 @@ static void render(EventPayload event, void *_state) {
 
 static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     PongState *state = _state;
+    
+    // Clear entire state first for fresh start
+    memset(state, 0, sizeof(*state));
     state->scene = scene;
     
     // Create game area background - rotated 90° CCW, horizontal layout
@@ -317,7 +322,7 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneBox_setColor(state->ball, ffx_color_rgb(255, 255, 255));
     ffx_sceneGroup_appendChild(node, state->ball);
     
-    // Initialize game state
+    // Initialize game state values
     state->playerScore = 0;
     state->aiScore = 0;
     state->playerPaddleY = GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2;  // Center vertically

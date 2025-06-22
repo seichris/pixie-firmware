@@ -130,13 +130,13 @@ static bool checkCollision(TetrisState *state, int x, int y, int rotation) {
                 int nx = x + px;
                 int ny = y + py;
                 
-                // Check bounds (rotated: left edge is now the bottom)
-                if (nx < 0 || ny < 0 || ny >= BOARD_HEIGHT) {
+                // Check bounds (horizontal layout: pieces fall from right to left)
+                if (nx < 0 || nx >= BOARD_WIDTH || ny < 0 || ny >= BOARD_HEIGHT) {
                     return true;
                 }
                 
                 // Check collision with placed blocks
-                if (ny >= 0 && state->grid[ny][nx]) {
+                if (nx >= 0 && nx < BOARD_WIDTH && ny >= 0 && ny < BOARD_HEIGHT && state->grid[ny][nx]) {
                     return true;
                 }
             }
@@ -194,7 +194,7 @@ static int clearLines(TetrisState *state) {
 
 static void spawnPiece(TetrisState *state) {
     state->currentPiece = rand() % PIECE_COUNT;
-    state->pieceX = BOARD_WIDTH - 1;      // Spawn from right side
+    state->pieceX = 0;                    // Spawn from left side
     state->pieceY = BOARD_HEIGHT / 2 - 2; // Center vertically
     state->pieceRotation = 0;
     
@@ -239,19 +239,6 @@ static void keyChanged(EventPayload event, void *_state) {
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
-    Keys keys = event.props.keys.down;
-    
-    // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    if (state->gameStartTime == 0) {
-        state->gameStartTime = ticks();
-        printf("[tetris] Game start time set, ignoring keys for 500ms\n");
-        return;
-    }
-    if (ticks() - state->gameStartTime < 500) {
-        printf("[tetris] Ignoring keys due to startup delay\n");
-        return;
-    }
-    
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (rotate piece)
     // Button 2 (KeyOk) = Pause/Exit (hold 1s) 
@@ -259,6 +246,18 @@ static void keyChanged(EventPayload event, void *_state) {
     // Button 4 (KeySouth) = Down/Left movement
     
     static uint32_t okHoldStart = 0;
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
+        okHoldStart = 0; // Reset static variable when game restarts
+        printf("[tetris] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - state->gameStartTime < 500) {
+        printf("[tetris] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Handle Ok button hold-to-exit, short press for pause
     if (event.props.keys.down & KeyOk) {
@@ -349,8 +348,8 @@ static void render(EventPayload event, void *_state) {
     }
     
     if (now - state->lastDrop > state->dropSpeed) {
-        if (!checkCollision(state, state->pieceX - 1, state->pieceY, state->pieceRotation)) {
-            state->pieceX--;  // Move left in rotated layout
+        if (!checkCollision(state, state->pieceX + 1, state->pieceY, state->pieceRotation)) {
+            state->pieceX++;  // Move right in rotated layout (left to right fall)
         } else {
             // Piece has landed
             placePiece(state);
@@ -379,6 +378,9 @@ static void render(EventPayload event, void *_state) {
 
 static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     TetrisState *state = _state;
+    
+    // Clear entire state first for fresh start
+    memset(state, 0, sizeof(*state));
     state->scene = scene;
     
     // Create game area background - rotated 90° CCW, horizontal layout
@@ -415,7 +417,7 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
         }
     }
     
-    // Initialize game state
+    // Initialize game state values
     memset(state->grid, 0, sizeof(state->grid));
     state->score = 0;
     state->lines = 0;

@@ -54,9 +54,9 @@ static void showQRCode(WalletState *state) {
     ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = -300, .y = 0 });
     
     // Show QR modules (smaller size to fit screen properly)
-    int moduleSize = 10;  // Smaller 10x10 pixels per module (about 45% reduction from 18)
-    int startX = 20;      // Center horizontally 
-    int startY = 20;      // Center vertically
+    int moduleSize = 8;   // Even smaller 8x8 pixels per module for better fit
+    int startX = 30;      // Center horizontally 
+    int startY = 30;      // Center vertically
     
     printf("[wallet] Displaying QR modules at startX=%d, startY=%d\n", startX, startY);
     
@@ -117,40 +117,44 @@ static void keyChanged(EventPayload event, void *_state) {
         // Primary action - generate new wallet
         printf("[wallet] Starting key generation...\n");
         
-        // Reset watchdog before starting
-        esp_task_wdt_reset();
+        // Show loading message
+        ffx_sceneLabel_setText(state->nodeAddress1, "Generating new");
+        ffx_sceneLabel_setText(state->nodeAddress2, "address...");
+        ffx_sceneLabel_setText(state->nodeInstructions, "Please wait...");
+        
+        // Disable watchdog for this task during crypto operations
+        esp_task_wdt_delete(NULL);
         
         esp_fill_random(state->privateKey, FFX_PRIVKEY_LENGTH);
         
-        // Longer yield to prevent watchdog timeout during crypto operations
-        vTaskDelay(pdMS_TO_TICKS(10));
-        esp_task_wdt_reset();
+        // Yield frequently during crypto operations
+        vTaskDelay(pdMS_TO_TICKS(50));
         
         printf("[wallet] Computing public key...\n");
-        // Compute public key with watchdog management
+        // Compute public key 
         if (!ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
             printf("[wallet] Public key computation failed!\n");
+            // Re-add to watchdog before returning
+            esp_task_wdt_add(NULL);
             return;
         }
         
-        // Reset watchdog and yield
-        esp_task_wdt_reset();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // Yield after intensive operation
+        vTaskDelay(pdMS_TO_TICKS(50));
         
         printf("[wallet] Computing address...\n");
         // Compute address
         ffx_eth_computeAddress(state->publicKey, state->address);
         
-        // Reset watchdog and yield
-        esp_task_wdt_reset();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // Yield after operation
+        vTaskDelay(pdMS_TO_TICKS(50));
         
         printf("[wallet] Computing checksum...\n");
         // Get checksum address string
         ffx_eth_checksumAddress(state->address, state->addressStr);
         
-        // Final watchdog reset
-        esp_task_wdt_reset();
+        // Re-add to watchdog when done with crypto operations
+        esp_task_wdt_add(NULL);
         
         printf("[wallet] Key generation complete!\n");
         
@@ -207,9 +211,9 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneGroup_appendChild(node, state->nodeInstructions);
     ffx_sceneNode_setPosition(state->nodeInstructions, (FfxPoint){ .x = 30, .y = 140 });
     
-    // Create QR visual modules (large modules for full screen display)
+    // Create QR visual modules (smaller modules for better fit)
     for (int i = 0; i < QR_SIZE * QR_SIZE; i++) {
-        state->qrModules[i] = ffx_scene_createBox(scene, ffx_size(18, 18));  // Large 18x18 modules
+        state->qrModules[i] = ffx_scene_createBox(scene, ffx_size(8, 8));  // Smaller 8x8 modules
         ffx_sceneBox_setColor(state->qrModules[i], COLOR_BLACK);
         ffx_sceneGroup_appendChild(node, state->qrModules[i]);
         // Initially hide all modules off-screen

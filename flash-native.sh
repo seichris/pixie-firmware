@@ -11,8 +11,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${YELLOW}🔥 Firefly Pixie Native Flash${NC}"
-echo "=============================="
+printf "${YELLOW}🔥 Firefly Pixie Native Flash${NC}\n"
+printf "==============================\n"
 
 # Auto-detect device
 DEVICE_PATTERNS=("/dev/tty.usbmodem*" "/dev/tty.usbserial-*" "/dev/tty.SLAB_USBtoUART*")
@@ -27,18 +27,18 @@ for pattern in "${DEVICE_PATTERNS[@]}"; do
 done
 
 if [ -z "$DEVICE" ]; then
-    echo -e "${RED}❌ No ESP32 device found${NC}"
-    echo "Available devices:"
+    printf "${RED}❌ No ESP32 device found${NC}\n"
+    printf "Available devices:\n"
     ls /dev/tty.* 2>/dev/null | head -10
     exit 1
 fi
 
-echo -e "${GREEN}✅ Found device: $DEVICE${NC}"
+printf "${GREEN}✅ Found device: $DEVICE${NC}\n"
 
 # Build first
-echo ""
-echo "🔨 Building firmware..."
-echo "   📦 Cleaning previous build..."
+printf "\n"
+printf "🔨 Building firmware...\n"
+printf "   📦 Cleaning previous build...\n"
 
 # Redirect verbose output to log file, show only important messages
 BUILD_LOG="/tmp/pixie-build.log"
@@ -52,19 +52,19 @@ echo "" > "$BUILD_LOG"  # Clear log file
     
     # Show only important build progress messages
     if [[ "$line" =~ "Generating" ]] || [[ "$line" =~ "Creating" ]] || [[ "$line" =~ "Linking" ]] || [[ "$line" =~ "Project build complete" ]] || [[ "$line" =~ "To flash" ]]; then
-        printf "   %s\n" "$line"
+        printf "\r   %s\n" "$line"
     elif [[ "$line" =~ "Building" ]] && [[ "$line" =~ ".bin" ]]; then
-        printf "   %s\n" "$line"
+        printf "\r   %s\n" "$line"
     fi
 done
 
 # Check if build succeeded by looking for the binary files
 if [ -f "build/pixie.bin" ] && [ -f "build/bootloader/bootloader.bin" ] && [ -f "build/partition_table/partition-table.bin" ]; then
-    echo -e "   ${GREEN}✅ Build completed successfully${NC}"
-    echo "   📄 Build log saved to: $BUILD_LOG"
+    printf "   ${GREEN}✅ Build completed successfully${NC}\n"
+    printf "   📄 Build log saved to: $BUILD_LOG\n"
 else
-    echo -e "${RED}❌ Build failed${NC}"
-    echo "📄 Check build log for details: $BUILD_LOG"
+    printf "${RED}❌ Build failed${NC}\n"
+    printf "📄 Check build log for details: $BUILD_LOG\n"
     exit 1
 fi
 
@@ -77,26 +77,26 @@ elif python -m esptool --help &> /dev/null; then
 elif python3 -m esptool --help &> /dev/null; then
     ESPTOOL_CMD="python3 -m esptool"
 else
-    echo ""
-    echo "⚠️  esptool not found. Installing via pip..."
-    echo ""
-    echo "Run this command to install esptool:"
-    echo "  pip install esptool"
-    echo ""
-    echo "Or use Homebrew:"
-    echo "  brew install esptool"
-    echo ""
-    echo "Then run this script again."
+    printf "\n"
+    printf "⚠️  esptool not found. Installing via pip...\n"
+    printf "\n"
+    printf "Run this command to install esptool:\n"
+    printf "  pip install esptool\n"
+    printf "\n"
+    printf "Or use Homebrew:\n"
+    printf "  brew install esptool\n"
+    printf "\n"
+    printf "Then run this script again.\n"
     exit 1
 fi
 
-echo -e "   🔧 Using esptool: ${GREEN}$ESPTOOL_CMD${NC}"
+printf "   🔧 Using esptool: ${GREEN}$ESPTOOL_CMD${NC}\n"
 
-echo ""
-echo "⚡ Flashing firmware to device..."
-echo "   📋 Target: $DEVICE"
-echo "   ⚙️  Chip: ESP32-C3"
-echo "   🚀 Baud: 460800"
+printf "\n"
+printf "⚡ Flashing firmware to device...\n"
+printf "   📋 Target: $DEVICE\n"
+printf "   ⚙️  Chip: ESP32-C3\n"
+printf "   🚀 Baud: 460800\n"
 
 # Flash using native esptool with cleaner output
 FLASH_LOG="/tmp/pixie-flash.log"
@@ -114,26 +114,26 @@ echo "" > "$FLASH_LOG"  # Clear log file
     
     # Show progress for important flash steps
     if [[ "$line" =~ "Connecting" ]] || [[ "$line" =~ "Chip is" ]] || [[ "$line" =~ "Uploading stub" ]] || [[ "$line" =~ "Configuring flash" ]] || [[ "$line" =~ "Writing at" ]] || [[ "$line" =~ "Hash of data verified" ]] || [[ "$line" =~ "Leaving" ]]; then
-        printf "   %s\n" "$line"
+        printf "\r   %s\n" "$line"
     elif [[ "$line" =~ "%" ]]; then
         # Show progress percentages on same line
         printf "\r   📦 %s" "$line"
     fi
 done
 
-echo "" # New line after progress
+printf "\n" # New line after progress
 
 if [ $? -eq 0 ]; then
-    echo ""
-    echo -e "${GREEN}🎉 Flash successful!${NC}"
-    echo ""
-    echo -e "${YELLOW}🔧 To monitor serial output:${NC}"
-    echo -e "  ${GREEN}screen $DEVICE 115200${NC}"
-    echo "  # Press Ctrl+A then K to exit screen"
-    echo ""
-    echo "📄 Flash log saved to: $FLASH_LOG"
+    printf "\n"
+    printf "${GREEN}🎉 Flash successful!${NC}\n"
+    printf "\n"
+    printf "${YELLOW}🔧 To monitor serial output:${NC}\n"
+    printf "  ${GREEN}screen $DEVICE 115200${NC}\n"
+    printf "  # Press Ctrl+A then K to exit screen\n"
+    printf "\n"
+    printf "📄 Flash log saved to: $FLASH_LOG\n"
 else
-    echo -e "${RED}❌ Flash failed${NC}"
-    echo "📄 Check flash log for details: $FLASH_LOG"
+    printf "${RED}❌ Flash failed${NC}\n"
+    printf "📄 Check flash log for details: $FLASH_LOG\n"
     exit 1
 fi

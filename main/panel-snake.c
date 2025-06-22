@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "firefly-scene.h"
 #include "firefly-color.h"
@@ -147,19 +148,6 @@ static void keyChanged(EventPayload event, void *_state) {
     // Update current keys for continuous movement
     state->currentKeys = event.props.keys.down;
     
-    Keys keys = event.props.keys.down;
-    
-    // Ignore key events for first 500ms to prevent immediate exits from residual button state
-    if (state->gameStartTime == 0) {
-        state->gameStartTime = ticks();
-        printf("[snake] Game start time set, ignoring keys for 500ms\n");
-        return;
-    }
-    if (ticks() - state->gameStartTime < 500) {
-        printf("[snake] Ignoring keys due to startup delay\n");
-        return;
-    }
-    
     // Standardized controls:
     // Button 1 (KeyCancel) = Primary action (rotate direction)
     // Button 2 (KeyOk) = Pause/Exit (hold 1s)
@@ -167,6 +155,18 @@ static void keyChanged(EventPayload event, void *_state) {
     // Button 4 (KeySouth) = Down/Left movement
     
     static uint32_t okHoldStart = 0;
+    
+    // Ignore key events for first 500ms to prevent immediate exits from residual button state
+    if (state->gameStartTime == 0) {
+        state->gameStartTime = ticks();
+        okHoldStart = 0; // Reset static variable when game restarts
+        printf("[snake] Game start time set, ignoring keys for 500ms\n");
+        return;
+    }
+    if (ticks() - state->gameStartTime < 500) {
+        printf("[snake] Ignoring keys due to startup delay\n");
+        return;
+    }
     
     // Handle Ok button hold-to-exit, short press for pause
     if (event.props.keys.down & KeyOk) {
@@ -283,6 +283,9 @@ static void render(EventPayload event, void *_state) {
 
 static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     SnakeState *state = _state;
+    
+    // Clear entire state first for fresh start
+    memset(state, 0, sizeof(*state));
     state->scene = scene;
     
     // Create game area background - positioned like Le Space with controls on RIGHT

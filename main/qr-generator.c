@@ -48,41 +48,58 @@ static void drawTimingPattern(QRCode *qr) {
 }
 
 static void encodeData(QRCode *qr, const char *data) {
-    // Create a more realistic QR pattern with format info and data modules
-    uint32_t hash = 0;
-    const char *p = data;
-    while (*p) {
-        hash = hash * 31 + *p++;
+    // Create a simple text-based QR pattern that embeds the actual address
+    int dataLen = strlen(data);
+    printf("[qr] Encoding data: %s (length=%d)\n", data, dataLen);
+    
+    // For debugging: log first few characters
+    if (dataLen > 0) {
+        printf("[qr] First chars: 0x%02x 0x%02x 0x%02x\n", 
+               (uint8_t)data[0], 
+               dataLen > 1 ? (uint8_t)data[1] : 0,
+               dataLen > 2 ? (uint8_t)data[2] : 0);
     }
     
-    // Fill format information areas (like real QR codes)
-    // Top-left format info (around top-left finder)
+    // Create proper QR format information for Version 1 (21x21), Error Correction Level L
+    uint16_t formatInfo = 0x548C; // Format bits for ECL=L, Mask=0
+    printf("[qr] Using format info: 0x%04x\n", formatInfo);
+    
+    // Top-left format info
     for (int i = 0; i < 9; i++) {
-        if (i != 6) { // Skip timing pattern
-            setModule(qr, 8, i, (hash >> i) & 1);
-            setModule(qr, i, 8, (hash >> (i + 1)) & 1);
+        if (i != 6) { // Skip timing pattern position
+            bool bit = (formatInfo >> i) & 1;
+            setModule(qr, 8, i, bit);
+            setModule(qr, i, 8, bit);
         }
     }
     
-    // Top-right format info
-    for (int i = 0; i < 7; i++) {
-        setModule(qr, qr->size - 1 - i, 8, (hash >> (i + 2)) & 1);
+    // Top-right format info  
+    for (int i = 0; i < 8; i++) {
+        bool bit = (formatInfo >> (14 - i)) & 1;
+        setModule(qr, qr->size - 1 - i, 8, bit);
     }
     
     // Bottom-left format info
     for (int i = 0; i < 7; i++) {
-        setModule(qr, 8, qr->size - 7 + i, (hash >> (i + 3)) & 1);
+        bool bit = (formatInfo >> (6 - i)) & 1;
+        setModule(qr, 8, qr->size - 7 + i, bit);
     }
     
-    // Dark module (required)
+    // Dark module (always dark at position (4*version + 9, 8))
     setModule(qr, 8, qr->size - 8, true);
     
-    // Fill data area with a more structured pattern
+    // Fill data area with actual address bits
+    int dataByteIndex = 0;
+    int dataBitIndex = 0;
+    int modulesPlaced = 0;
+    
+    // QR code data is filled in a specific zigzag pattern, but we'll use a simpler approach
+    // for better readability while still encoding the actual address
     for (int y = 0; y < qr->size; y++) {
         for (int x = 0; x < qr->size; x++) {
-            // Skip already filled areas
+            // Skip function patterns
             if ((x < 9 && y < 9) ||                    // Top-left finder + format
-                (x >= qr->size - 8 && y < 9) ||       // Top-right finder + format
+                (x >= qr->size - 8 && y < 9) ||       // Top-right finder + format  
                 (x < 9 && y >= qr->size - 8) ||       // Bottom-left finder + format
                 (x == 6 || y == 6) ||                 // Timing patterns
                 (x == 8 && y < qr->size - 7) ||       // Format info column
@@ -90,22 +107,29 @@ static void encodeData(QRCode *qr, const char *data) {
                 continue;
             }
             
-            // Create data pattern based on position and hash
-            // Use both coordinates to create more variation
-            uint32_t posHash = hash;
-            posHash ^= (x * 7) ^ (y * 11);
-            posHash ^= ((x + y) * 3);
+            bool value = false;
             
-            // Create alternating regions for better visual structure
-            int region = ((x / 4) + (y / 4)) % 4;
-            posHash ^= region * 17;
-            
-            // ~50% fill with some spatial correlation
-            bool value = (posHash % 7) < 3;  // 3/7 ≈ 43% fill rate
+            // Use actual data bits when available
+            if (dataByteIndex < dataLen) {
+                uint8_t currentByte = (uint8_t)data[dataByteIndex];
+                value = (currentByte >> (7 - dataBitIndex)) & 1;
+                
+                dataBitIndex++;
+                if (dataBitIndex >= 8) {
+                    dataBitIndex = 0;
+                    dataByteIndex++;
+                }
+            } else {
+                // Padding pattern when we run out of data
+                value = (modulesPlaced % 17) < 8; // Create a recognizable pattern
+            }
             
             setModule(qr, x, y, value);
+            modulesPlaced++;
         }
     }
+    
+    printf("[qr] Encoded %d data modules, used %d bytes of address data\n", modulesPlaced, dataByteIndex);
 }
 
 bool qr_generate(QRCode *qr, const char *data) {

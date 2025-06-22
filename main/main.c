@@ -58,10 +58,10 @@ void app_main() {
     //pushPanelConnect(NULL);
 
     while (1) {
-        printf("[main] high-water: boot=%d io=%d freq=%ld\n",
+        printf("[main] high-water: boot=%d io=%d freq=%d\n",
             uxTaskGetStackHighWaterMark(NULL),
             uxTaskGetStackHighWaterMark(taskIoHandle),
-            portTICK_PERIOD_MS);
+            configTICK_RATE_HZ);
         delay(60000);
     }
 }
