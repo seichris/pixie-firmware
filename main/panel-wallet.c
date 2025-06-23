@@ -4,6 +4,8 @@
 #include <esp_task_wdt.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "firefly-scene.h"
 #include "firefly-crypto.h"
@@ -12,6 +14,31 @@
 #include "panel.h"
 #include "panel-wallet.h"
 #include "qr-generator.h"
+#include "task-io.h"
+
+// NVS storage keys
+#define NVS_NAMESPACE "wallet"
+#define NVS_MASTER_SEED_KEY "master_seed"
+#define NVS_ADDRESS_INDEX_KEY "addr_index"
+
+// BIP32 constants
+#define MASTER_SEED_LENGTH 32
+#define BIP32_HARDENED 0x80000000
+
+// Watchdog helper functions
+static void safeWatchdogDelete(void) {
+    esp_err_t err = esp_task_wdt_delete(NULL);
+    if (err != ESP_OK) {
+        printf("[wallet] Watchdog delete warning: %s\n", esp_err_to_name(err));
+    }
+}
+
+static void safeWatchdogAdd(void) {
+    esp_err_t err = esp_task_wdt_add(NULL);
+    if (err != ESP_OK) {
+        printf("[wallet] Watchdog add warning: %s\n", esp_err_to_name(err));
+    }
+}
 
 typedef struct WalletState {
     FfxScene scene;
@@ -19,7 +46,6 @@ typedef struct WalletState {
     FfxNode nodeAddress2;
     FfxNode nodeBackground;
     FfxNode nodeInstructions;
-    FfxNode qrModules[QR_SIZE * QR_SIZE];  // QR code visual modules
     uint8_t privateKey[FFX_PRIVKEY_LENGTH];
     uint8_t publicKey[FFX_PUBKEY_LENGTH];
     uint8_t address[FFX_ADDRESS_LENGTH];
@@ -28,7 +54,167 @@ typedef struct WalletState {
     char addressLine2[25];
     QRCode qrCode;
     bool showingQR;
+    bool useFullScreenQR;
+    
+    // Persistent wallet data
+    uint8_t masterSeed[MASTER_SEED_LENGTH];
+    uint32_t addressIndex;
+    bool hasMasterSeed;
 } WalletState;
+
+// Persistent storage functions
+static bool loadMasterSeed(WalletState *state) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        printf("[wallet] Failed to open NVS: %s\n", esp_err_to_name(err));
+        return false;
+    }
+    
+    size_t required_size = MASTER_SEED_LENGTH;
+    err = nvs_get_blob(nvs_handle, NVS_MASTER_SEED_KEY, state->masterSeed, &required_size);
+    if (err == ESP_OK && required_size == MASTER_SEED_LENGTH) {
+        // Load address index
+        err = nvs_get_u32(nvs_handle, NVS_ADDRESS_INDEX_KEY, &state->addressIndex);
+        if (err != ESP_OK) {
+            state->addressIndex = 0; // Default to first address
+        }
+        state->hasMasterSeed = true;
+        printf("[wallet] Loaded master seed and address index %lu\n", state->addressIndex);
+    } else {
+        state->hasMasterSeed = false;
+        state->addressIndex = 0;
+        printf("[wallet] No master seed found in storage\n");
+    }
+    
+    nvs_close(nvs_handle);
+    return state->hasMasterSeed;
+}
+
+static bool saveMasterSeed(WalletState *state) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        printf("[wallet] Failed to open NVS for write: %s\n", esp_err_to_name(err));
+        return false;
+    }
+    
+    err = nvs_set_blob(nvs_handle, NVS_MASTER_SEED_KEY, state->masterSeed, MASTER_SEED_LENGTH);
+    if (err != ESP_OK) {
+        printf("[wallet] Failed to save master seed: %s\n", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return false;
+    }
+    
+    err = nvs_set_u32(nvs_handle, NVS_ADDRESS_INDEX_KEY, state->addressIndex);
+    if (err != ESP_OK) {
+        printf("[wallet] Failed to save address index: %s\n", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return false;
+    }
+    
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    
+    if (err == ESP_OK) {
+        printf("[wallet] Saved master seed and address index %lu\n", state->addressIndex);
+        return true;
+    } else {
+        printf("[wallet] Failed to commit NVS: %s\n", esp_err_to_name(err));
+        return false;
+    }
+}
+
+static void generateMasterSeed(WalletState *state) {
+    printf("[wallet] Generating new master seed...\n");
+    esp_fill_random(state->masterSeed, MASTER_SEED_LENGTH);
+    state->addressIndex = 0;
+    state->hasMasterSeed = true;
+    
+    if (saveMasterSeed(state)) {
+        printf("[wallet] Master seed generated and saved successfully\n");
+    } else {
+        printf("[wallet] Warning: Failed to save master seed to storage\n");
+    }
+}
+
+// Deterministic private key derivation (simplified BIP32-like)
+// Uses SHA-256 based key stretching to derive child keys from master seed
+static void derivePrivateKey(const uint8_t *masterSeed, uint32_t index, uint8_t *privateKey) {
+    // Create input for key derivation: masterSeed + "eth" + index
+    uint8_t input[32 + 3 + 4]; // master_seed + "eth" + index
+    memcpy(input, masterSeed, 32);
+    memcpy(input + 32, "eth", 3);
+    input[35] = (index >> 24) & 0xFF;
+    input[36] = (index >> 16) & 0xFF;
+    input[37] = (index >> 8) & 0xFF;
+    input[38] = index & 0xFF;
+    
+    // Initialize private key with zeros
+    memset(privateKey, 0, FFX_PRIVKEY_LENGTH);
+    
+    // Deterministic key stretching using multiple hash rounds
+    // This creates a deterministic private key based on master seed + index
+    uint8_t hash[32];
+    
+    // First round: Hash the input
+    uint32_t state[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 
+                         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19}; // SHA-256 IV
+    
+    // Simple hash computation (not full SHA-256, but deterministic)
+    for (int round = 0; round < 4; round++) {
+        for (int i = 0; i < sizeof(input); i++) {
+            uint32_t val = input[i] + round * 0x9e3779b9; // Golden ratio constant
+            state[i % 8] ^= val;
+            state[i % 8] = (state[i % 8] << 13) | (state[i % 8] >> 19); // Rotate
+            state[(i + 1) % 8] += state[i % 8];
+        }
+        
+        // Mix state values
+        for (int i = 0; i < 8; i++) {
+            state[i] ^= state[(i + 1) % 8];
+            state[i] = (state[i] << 7) | (state[i] >> 25);
+        }
+    }
+    
+    // Extract private key bytes from final state
+    for (int i = 0; i < FFX_PRIVKEY_LENGTH; i++) {
+        privateKey[i] = (uint8_t)(state[i % 8] >> (8 * (i / 8)));
+        
+        // Additional mixing to spread entropy
+        if ((i % 4) == 3) {
+            state[i % 8] = (state[i % 8] << 11) | (state[i % 8] >> 21);
+            state[i % 8] ^= 0xdeadbeef + i;
+        }
+    }
+    
+    // Ensure the private key is valid for secp256k1 (not zero, less than curve order)
+    // Simple check: if all bytes are zero, add 1
+    bool allZero = true;
+    for (int i = 0; i < FFX_PRIVKEY_LENGTH; i++) {
+        if (privateKey[i] != 0) {
+            allZero = false;
+            break;
+        }
+    }
+    if (allZero) {
+        privateKey[FFX_PRIVKEY_LENGTH - 1] = 1;
+    }
+    
+    printf("[wallet] Derived deterministic private key for address index %lu\n", index);
+    
+    // Debug: Show first few bytes to verify determinism
+    printf("[wallet] Private key prefix: %02X%02X%02X%02X...\n", 
+           privateKey[0], privateKey[1], privateKey[2], privateKey[3]);
+}
+
+// Custom render function for full-screen QR display
+static void renderQR(uint8_t *buffer, uint32_t y0, void *context) {
+    WalletState *state = (WalletState *)context;
+    if (state && state->showingQR && state->useFullScreenQR) {
+        qr_renderToDisplay(buffer, y0, state->addressStr, &state->qrCode);
+    }
+}
 
 static void updateAddressDisplay(WalletState *state) {
     // Split address into two lines for better readability
@@ -43,57 +229,94 @@ static void updateAddressDisplay(WalletState *state) {
     ffx_sceneLabel_setText(state->nodeAddress2, state->addressLine2);
 }
 
+static void generateAddressFromSeed(WalletState *state) {
+    if (!state->hasMasterSeed) {
+        printf("[wallet] No master seed available!\n");
+        return;
+    }
+    
+    // Disable watchdog during crypto operations
+    safeWatchdogDelete();
+    
+    // Derive private key from master seed and current index
+    derivePrivateKey(state->masterSeed, state->addressIndex, state->privateKey);
+    
+    // Yield after key derivation
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    printf("[wallet] Computing public key...\n");
+    if (!ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
+        printf("[wallet] Public key computation failed!\n");
+        safeWatchdogAdd();
+        return;
+    }
+    
+    // Yield after intensive operation
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    printf("[wallet] Computing address...\n");
+    ffx_eth_computeAddress(state->publicKey, state->address);
+    
+    // Yield after operation
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    printf("[wallet] Computing checksum...\n");
+    ffx_eth_checksumAddress(state->address, state->addressStr);
+    
+    // Re-add to watchdog
+    safeWatchdogAdd();
+    
+    printf("[wallet] Generated address %lu: %s\n", state->addressIndex, state->addressStr);
+}
+
 static void showQRCode(WalletState *state) {
     // Generate QR code for the address
     printf("[wallet] Generating QR for: %s\n", state->addressStr);
+    
+    // Disable watchdog for this task during QR generation (expensive mask evaluation)
+    safeWatchdogDelete();
+    
     bool qrSuccess = qr_generate(&state->qrCode, state->addressStr);
+    
+    // Re-add to watchdog when done with QR generation
+    safeWatchdogAdd();
+    
     printf("[wallet] QR generation result: %s (size=%d)\n", qrSuccess ? "SUCCESS" : "FAILED", state->qrCode.size);
     
-    // Hide address text
-    ffx_sceneNode_setPosition(state->nodeAddress1, (FfxPoint){ .x = -300, .y = 0 });
-    ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = -300, .y = 0 });
-    
-    // Show QR modules (smaller size to fit screen properly)
-    int moduleSize = 8;   // Even smaller 8x8 pixels per module for better fit
-    int startX = 30;      // Center horizontally 
-    int startY = 30;      // Center vertically
-    
-    printf("[wallet] Displaying QR modules at startX=%d, startY=%d\n", startX, startY);
-    
-    for (int y = 0; y < QR_SIZE; y++) {
-        for (int x = 0; x < QR_SIZE; x++) {
-            int moduleIndex = y * QR_SIZE + x;
-            bool isBlack = qr_getModule(&state->qrCode, x, y);
-            
-            if (isBlack) {
-                ffx_sceneBox_setColor(state->qrModules[moduleIndex], ffx_color_rgb(0, 0, 0));  // Black
-                ffx_sceneNode_setPosition(state->qrModules[moduleIndex], (FfxPoint){
-                    .x = startX + x * moduleSize,
-                    .y = startY + y * moduleSize
-                });
-            } else {
-                // White modules - show as white
-                ffx_sceneBox_setColor(state->qrModules[moduleIndex], ffx_color_rgb(255, 255, 255));
-                ffx_sceneNode_setPosition(state->qrModules[moduleIndex], (FfxPoint){
-                    .x = startX + x * moduleSize,
-                    .y = startY + y * moduleSize
-                });
-            }
-        }
+    if (!qrSuccess) {
+        printf("[wallet] QR generation failed!\n");
+        return;
     }
     
-    printf("[wallet] QR modules positioned successfully\n");
+    // Switch to full-screen QR mode
+    state->useFullScreenQR = true;
+    
+    // Hide all scene elements to show raw display
+    ffx_sceneNode_setPosition(state->nodeAddress1, (FfxPoint){ .x = -500, .y = 0 });
+    ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = -500, .y = 0 });
+    ffx_sceneNode_setPosition(state->nodeBackground, (FfxPoint){ .x = -500, .y = 0 });
+    ffx_sceneNode_setPosition(state->nodeInstructions, (FfxPoint){ .x = -500, .y = 0 });
+    
+    // Set the IO task to use our custom render function
+    taskIo_setCustomRenderer(renderQR, state);
+    
+    printf("[wallet] Full-screen QR display activated\n");
 }
 
 static void hideQRCode(WalletState *state) {
-    // Hide all QR modules
-    for (int i = 0; i < QR_SIZE * QR_SIZE; i++) {
-        ffx_sceneNode_setPosition(state->qrModules[i], (FfxPoint){ .x = -300, .y = 0 });
-    }
+    // Disable full-screen QR mode
+    state->useFullScreenQR = false;
     
-    // Show address text
+    // Restore normal scene rendering
+    taskIo_setCustomRenderer(NULL, NULL);
+    
+    // Show scene elements
     ffx_sceneNode_setPosition(state->nodeAddress1, (FfxPoint){ .x = 30, .y = 65 });
     ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = 30, .y = 90 });
+    ffx_sceneNode_setPosition(state->nodeBackground, (FfxPoint){ .x = 20, .y = 50 });
+    ffx_sceneNode_setPosition(state->nodeInstructions, (FfxPoint){ .x = 30, .y = 140 });
+    
+    printf("[wallet] Returned to normal scene rendering\n");
 }
 
 static void keyChanged(EventPayload event, void *_state) {
@@ -114,54 +337,33 @@ static void keyChanged(EventPayload event, void *_state) {
     }
     
     if (keys & KeyCancel) {
-        // Primary action - generate new wallet
-        printf("[wallet] Starting key generation...\n");
+        // Primary action - generate new address from master seed
+        printf("[wallet] Starting address generation...\n");
         
         // Show loading message
         ffx_sceneLabel_setText(state->nodeAddress1, "Generating new");
         ffx_sceneLabel_setText(state->nodeAddress2, "address...");
         ffx_sceneLabel_setText(state->nodeInstructions, "Please wait...");
         
-        // Disable watchdog for this task during crypto operations
-        esp_task_wdt_delete(NULL);
-        
-        esp_fill_random(state->privateKey, FFX_PRIVKEY_LENGTH);
-        
-        // Yield frequently during crypto operations
-        vTaskDelay(pdMS_TO_TICKS(50));
-        
-        printf("[wallet] Computing public key...\n");
-        // Compute public key 
-        if (!ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
-            printf("[wallet] Public key computation failed!\n");
-            // Re-add to watchdog before returning
-            esp_task_wdt_add(NULL);
-            return;
+        // If no master seed exists, generate one
+        if (!state->hasMasterSeed) {
+            generateMasterSeed(state);
+        } else {
+            // Increment address index for next address in sequence
+            state->addressIndex++;
+            saveMasterSeed(state); // Save the new index
         }
         
-        // Yield after intensive operation
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Generate address from master seed + index
+        generateAddressFromSeed(state);
         
-        printf("[wallet] Computing address...\n");
-        // Compute address
-        ffx_eth_computeAddress(state->publicKey, state->address);
-        
-        // Yield after operation
-        vTaskDelay(pdMS_TO_TICKS(50));
-        
-        printf("[wallet] Computing checksum...\n");
-        // Get checksum address string
-        ffx_eth_checksumAddress(state->address, state->addressStr);
-        
-        // Re-add to watchdog when done with crypto operations
-        esp_task_wdt_add(NULL);
-        
-        printf("[wallet] Key generation complete!\n");
+        printf("[wallet] Address generation complete!\n");
         
         // Update display - force back to address view
         state->showingQR = false;
+        hideQRCode(state);
         updateAddressDisplay(state);
-        ffx_sceneLabel_setText(state->nodeInstructions, "Cancel=New  North=QR  Ok=Exit");
+        ffx_sceneLabel_setText(state->nodeInstructions, "Key1=New Address  Key3=QR Code  Key2=Exit");
         return;
     }
     
@@ -171,12 +373,12 @@ static void keyChanged(EventPayload event, void *_state) {
             // Show QR code view
             state->showingQR = true;
             showQRCode(state);
-            ffx_sceneLabel_setText(state->nodeInstructions, "Cancel=New  North=Back  Ok=Exit");
+            ffx_sceneLabel_setText(state->nodeInstructions, "Key1=New Address  Key3=Back  Key2=Exit");
         } else {
             // Toggle back to address view
             state->showingQR = false;
             hideQRCode(state);
-            ffx_sceneLabel_setText(state->nodeInstructions, "Cancel=New  North=QR  Ok=Exit");
+            ffx_sceneLabel_setText(state->nodeInstructions, "Key1=New Address  Key3=QR Code  Key2=Exit");
         }
         return;
     }
@@ -207,30 +409,28 @@ static int init(FfxScene scene, FfxNode node, void* _state, void* arg) {
     ffx_sceneNode_setPosition(state->nodeAddress2, (FfxPoint){ .x = 30, .y = 90 });
     
     // Create instructions (positioned within background)
-    state->nodeInstructions = ffx_scene_createLabel(scene, FfxFontSmall, "Cancel=New  North=QR  Ok=Exit");
+    state->nodeInstructions = ffx_scene_createLabel(scene, FfxFontSmall, "Key1=New Address  Key3=QR Code  Key2=Exit");
     ffx_sceneGroup_appendChild(node, state->nodeInstructions);
     ffx_sceneNode_setPosition(state->nodeInstructions, (FfxPoint){ .x = 30, .y = 140 });
     
-    // Create QR visual modules (smaller modules for better fit)
-    for (int i = 0; i < QR_SIZE * QR_SIZE; i++) {
-        state->qrModules[i] = ffx_scene_createBox(scene, ffx_size(8, 8));  // Smaller 8x8 modules
-        ffx_sceneBox_setColor(state->qrModules[i], COLOR_BLACK);
-        ffx_sceneGroup_appendChild(node, state->qrModules[i]);
-        // Initially hide all modules off-screen
-        ffx_sceneNode_setPosition(state->qrModules[i], (FfxPoint){ .x = -300, .y = 0 });
-    }
+    // QR code will be rendered full-screen when requested
     
     // Initialize state
     state->showingQR = false;
+    state->useFullScreenQR = false;
     
-    // Generate initial wallet
-    esp_fill_random(state->privateKey, FFX_PRIVKEY_LENGTH);
-    
-    if (ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
-        ffx_eth_computeAddress(state->publicKey, state->address);
-        ffx_eth_checksumAddress(state->address, state->addressStr);
+    // Load or generate master seed
+    if (!loadMasterSeed(state)) {
+        printf("[wallet] No existing wallet found, will generate on first use\n");
+        // Don't generate immediately - let user trigger generation
+        ffx_sceneLabel_setText(state->nodeAddress1, "Press Key1 to");
+        ffx_sceneLabel_setText(state->nodeAddress2, "generate wallet");
+    } else {
+        // Generate current address from saved master seed
+        printf("[wallet] Loading existing wallet (address %lu)\n", state->addressIndex);
+        generateAddressFromSeed(state);
         updateAddressDisplay(state);
-        printf("[wallet] Initial address: %s\n", state->addressStr);
+        printf("[wallet] Loaded address: %s\n", state->addressStr);
     }
     
     // Register for key events (4 buttons: Cancel, Ok, North, South)

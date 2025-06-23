@@ -123,11 +123,12 @@ Common ESP32-C3 device names:
 
 ## What's Included
 
-✅ **Ethereum Wallet** - Generate addresses, view on screen  
+✅ **Ethereum Wallet** - Generate addresses with full-screen QR codes  
 ✅ **Snake Game** - Classic snake with scoring  
 ✅ **Tetris** - Full implementation with line clearing  
 ✅ **Pong** - Player vs AI paddle game  
-✅ **Original Features** - Space Invaders, GIFs, device info  
+✅ **Le Space** - Original Space Invaders clone  
+✅ **Enhanced Features** - Full-screen QR display, ESP-IDF 6.0 support  
 
 ## Controls
 

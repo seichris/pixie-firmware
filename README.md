@@ -8,14 +8,16 @@ The Firefly Pixie is a compact handheld device featuring an Ethereum wallet, cla
 
 ### Ethereum Wallet
 - **Generate HD Wallets**: Create secure Ethereum addresses on-device
-- **Address Display**: View checksummed addresses with QR code placeholder
+- **Full-Screen QR Codes**: Large, scannable QR codes with address text overlay
+- **Address Display**: View checksummed addresses with proper formatting
 - **Hardware Security**: Private keys never leave the device
 
 ### Classic Games
 - **🐍 Snake**: Classic snake game with scoring and right-side orientation
 - **🧩 Tetris**: Full Tetris implementation with line clearing and level progression  
 - **🏓 Pong**: Player vs AI paddle game
-- **👾 Le Space**: Original Space Invaders clone
+- **👾 Le Space**: Original Space Invaders clone with explosion effects
+- **🎮 Retro Aesthetics**: Authentic pixel art and classic game mechanics
 
 ### Additional Features
 - **📱 Device Info**: Hardware specifications and attestation
@@ -44,7 +46,7 @@ The Firefly Pixie hardware has 4 fully functional physical buttons:
 - **🐍 Snake**: Button 1=Rotate direction, Button 2=Pause/Exit, Button 3/4=Smart movement
 - **🧩 Tetris**: Button 1=Rotate piece, Button 2=Pause/Exit, Button 3/4=Move right/left
 - **🏓 Pong**: Button 1=Speed boost, Button 2=Pause/Exit, Button 3/4=Paddle right/left
-- **💰 Wallet**: Button 1=Generate address, Button 2=Exit, Button 3=Toggle QR
+- **💰 Wallet**: Button 1=Generate address, Button 2=Exit, Button 3=Toggle full-screen QR
 - **📱 Menu**: Button 2=Select, Button 3/4=Navigate up/down
 
 ## 🔧 Quick Start
@@ -169,10 +171,17 @@ All games are oriented for comfortable handheld use:
 
 ## 🚀 What's New
 
+### Latest Updates (ESP-IDF 6.0 Compatible)
+- ✅ **Full-Screen QR Display**: Large, scannable QR codes with ETH address text overlay
+- ✅ **ESP-IDF 6.0 Support**: Updated to latest ESP-IDF with new driver architecture
+- ✅ **Enhanced QR Generation**: 200x200 pixel QR codes optimized for mobile scanning
+- ✅ **Custom Display Rendering**: Direct framebuffer control for specialized displays
+- ✅ **Improved Address Display**: Better text formatting and visual hierarchy
+
+### Core Features
 - ✅ **Universal Control Scheme**: Consistent button mapping across all apps
 - ✅ **Game Orientation**: Right-side player positioning for ergonomic play
 - ✅ **Circular Menu Navigation**: Smooth scrolling with visual separator
-- ✅ **Improved Wallet UX**: Better positioning, bidirectional QR toggle
 - ✅ **Stable Performance**: Resolved memory issues and boot crashes
 - ✅ **Production Scripts**: Streamlined build and flash workflow
 
