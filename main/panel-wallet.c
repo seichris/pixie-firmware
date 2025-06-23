@@ -25,19 +25,10 @@
 #define MASTER_SEED_LENGTH 32
 #define BIP32_HARDENED 0x80000000
 
-// Watchdog helper functions
-static void safeWatchdogDelete(void) {
-    esp_err_t err = esp_task_wdt_delete(NULL);
-    if (err != ESP_OK) {
-        printf("[wallet] Watchdog delete warning: %s\n", esp_err_to_name(err));
-    }
-}
-
-static void safeWatchdogAdd(void) {
-    esp_err_t err = esp_task_wdt_add(NULL);
-    if (err != ESP_OK) {
-        printf("[wallet] Watchdog add warning: %s\n", esp_err_to_name(err));
-    }
+// Task yield helper to prevent watchdog timeouts without managing watchdog directly
+static void preventWatchdogTimeout(void) {
+    // Yield to allow watchdog and other tasks to run
+    vTaskDelay(pdMS_TO_TICKS(100));
 }
 
 typedef struct WalletState {
@@ -235,36 +226,33 @@ static void generateAddressFromSeed(WalletState *state) {
         return;
     }
     
-    // Disable watchdog during crypto operations
-    safeWatchdogDelete();
-    
+    printf("[wallet] Deriving private key...\n");
     // Derive private key from master seed and current index
     derivePrivateKey(state->masterSeed, state->addressIndex, state->privateKey);
     
-    // Yield after key derivation
-    vTaskDelay(pdMS_TO_TICKS(50));
+    // Yield frequently to prevent watchdog timeout
+    preventWatchdogTimeout();
     
-    printf("[wallet] Computing public key...\n");
+    printf("[wallet] Computing public key (this may take several seconds)...\n");
     if (!ffx_pk_computePubkeySecp256k1(state->privateKey, state->publicKey)) {
         printf("[wallet] Public key computation failed!\n");
-        safeWatchdogAdd();
         return;
     }
     
-    // Yield after intensive operation
-    vTaskDelay(pdMS_TO_TICKS(50));
+    // Yield after intensive secp256k1 operation
+    preventWatchdogTimeout();
     
     printf("[wallet] Computing address...\n");
     ffx_eth_computeAddress(state->publicKey, state->address);
     
     // Yield after operation
-    vTaskDelay(pdMS_TO_TICKS(50));
+    preventWatchdogTimeout();
     
     printf("[wallet] Computing checksum...\n");
     ffx_eth_checksumAddress(state->address, state->addressStr);
     
-    // Re-add to watchdog
-    safeWatchdogAdd();
+    // Final yield to ensure system stability
+    preventWatchdogTimeout();
     
     printf("[wallet] Generated address %lu: %s\n", state->addressIndex, state->addressStr);
 }
@@ -273,13 +261,11 @@ static void showQRCode(WalletState *state) {
     // Generate QR code for the address
     printf("[wallet] Generating QR for: %s\n", state->addressStr);
     
-    // Disable watchdog for this task during QR generation (expensive mask evaluation)
-    safeWatchdogDelete();
-    
+    printf("[wallet] QR generation starting (this may take a few seconds)...\n");
     bool qrSuccess = qr_generate(&state->qrCode, state->addressStr);
     
-    // Re-add to watchdog when done with QR generation
-    safeWatchdogAdd();
+    // Yield to allow other tasks to run after QR generation
+    preventWatchdogTimeout();
     
     printf("[wallet] QR generation result: %s (size=%d)\n", qrSuccess ? "SUCCESS" : "FAILED", state->qrCode.size);
     
@@ -351,6 +337,7 @@ static void keyChanged(EventPayload event, void *_state) {
         } else {
             // Increment address index for next address in sequence
             state->addressIndex++;
+            printf("[wallet] Incremented address index to %lu\n", state->addressIndex);
             saveMasterSeed(state); // Save the new index
         }
         

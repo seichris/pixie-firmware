@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <math.h>
 #include <limits.h>
+#include "esp_task_wdt.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // QR Code galois field operations for error correction
 static uint8_t gf_mul(uint8_t a, uint8_t b) {
@@ -46,11 +49,12 @@ static uint8_t gf_mul(uint8_t a, uint8_t b) {
     return gf_exp[(gf_log[a] + gf_log[b]) % 255];
 }
 
-// Calculate penalty score for mask pattern (simplified version)
+// Calculate penalty score for mask pattern (ISO/IEC 18004 Section 7.8.3)
 static int calculateMaskPenalty(QRCode *qr, int mask) {
     int penalty = 0;
     
-    // Rule 1: Adjacent modules in row/column with same color
+    // Rule 1: Adjacent modules in row/column with same color (N1 = 3)
+    // Horizontal runs
     for (int row = 0; row < qr->size; row++) {
         int count = 1;
         bool lastColor = qr_getModule(qr, 0, row);
@@ -67,7 +71,24 @@ static int calculateMaskPenalty(QRCode *qr, int mask) {
         if (count >= 5) penalty += (count - 2);
     }
     
-    // Rule 2: Block of modules in same color (simplified)
+    // Vertical runs
+    for (int col = 0; col < qr->size; col++) {
+        int count = 1;
+        bool lastColor = qr_getModule(qr, col, 0);
+        for (int row = 1; row < qr->size; row++) {
+            bool color = qr_getModule(qr, col, row);
+            if (color == lastColor) {
+                count++;
+            } else {
+                if (count >= 5) penalty += (count - 2);
+                count = 1;
+                lastColor = color;
+            }
+        }
+        if (count >= 5) penalty += (count - 2);
+    }
+    
+    // Rule 2: Block of modules in same color (N2 = 3)
     for (int row = 0; row < qr->size - 1; row++) {
         for (int col = 0; col < qr->size - 1; col++) {
             bool color = qr_getModule(qr, col, row);
@@ -78,6 +99,88 @@ static int calculateMaskPenalty(QRCode *qr, int mask) {
             }
         }
     }
+    
+    // Rule 3: 1:1:3:1:1 ratio pattern in horizontal/vertical (N3 = 40)
+    // Pattern: 10111010000 or 00001011101
+    for (int row = 0; row < qr->size; row++) {
+        for (int col = 0; col <= qr->size - 11; col++) {
+            // Check for 10111010000 pattern
+            if (qr_getModule(qr, col, row) &&
+                !qr_getModule(qr, col + 1, row) &&
+                qr_getModule(qr, col + 2, row) &&
+                qr_getModule(qr, col + 3, row) &&
+                qr_getModule(qr, col + 4, row) &&
+                !qr_getModule(qr, col + 5, row) &&
+                qr_getModule(qr, col + 6, row) &&
+                !qr_getModule(qr, col + 7, row) &&
+                !qr_getModule(qr, col + 8, row) &&
+                !qr_getModule(qr, col + 9, row) &&
+                !qr_getModule(qr, col + 10, row)) {
+                penalty += 40;
+            }
+            
+            // Check for 00001011101 pattern
+            if (!qr_getModule(qr, col, row) &&
+                !qr_getModule(qr, col + 1, row) &&
+                !qr_getModule(qr, col + 2, row) &&
+                !qr_getModule(qr, col + 3, row) &&
+                qr_getModule(qr, col + 4, row) &&
+                !qr_getModule(qr, col + 5, row) &&
+                qr_getModule(qr, col + 6, row) &&
+                qr_getModule(qr, col + 7, row) &&
+                qr_getModule(qr, col + 8, row) &&
+                !qr_getModule(qr, col + 9, row) &&
+                qr_getModule(qr, col + 10, row)) {
+                penalty += 40;
+            }
+        }
+    }
+    
+    // Vertical patterns
+    for (int col = 0; col < qr->size; col++) {
+        for (int row = 0; row <= qr->size - 11; row++) {
+            // Check for 10111010000 pattern
+            if (qr_getModule(qr, col, row) &&
+                !qr_getModule(qr, col, row + 1) &&
+                qr_getModule(qr, col, row + 2) &&
+                qr_getModule(qr, col, row + 3) &&
+                qr_getModule(qr, col, row + 4) &&
+                !qr_getModule(qr, col, row + 5) &&
+                qr_getModule(qr, col, row + 6) &&
+                !qr_getModule(qr, col, row + 7) &&
+                !qr_getModule(qr, col, row + 8) &&
+                !qr_getModule(qr, col, row + 9) &&
+                !qr_getModule(qr, col, row + 10)) {
+                penalty += 40;
+            }
+            
+            // Check for 00001011101 pattern
+            if (!qr_getModule(qr, col, row) &&
+                !qr_getModule(qr, col, row + 1) &&
+                !qr_getModule(qr, col, row + 2) &&
+                !qr_getModule(qr, col, row + 3) &&
+                qr_getModule(qr, col, row + 4) &&
+                !qr_getModule(qr, col, row + 5) &&
+                qr_getModule(qr, col, row + 6) &&
+                qr_getModule(qr, col, row + 7) &&
+                qr_getModule(qr, col, row + 8) &&
+                !qr_getModule(qr, col, row + 9) &&
+                qr_getModule(qr, col, row + 10)) {
+                penalty += 40;
+            }
+        }
+    }
+    
+    // Rule 4: Proportion of dark modules (N4 = 10)
+    int darkCount = 0;
+    int totalModules = qr->size * qr->size;
+    for (int i = 0; i < totalModules; i++) {
+        if (qr->modules[i]) darkCount++;
+    }
+    
+    int percentage = (darkCount * 100) / totalModules;
+    int deviation = (percentage < 50) ? (50 - percentage) : (percentage - 50);
+    penalty += (deviation / 5) * 10;
     
     return penalty;
 }
@@ -97,10 +200,13 @@ static bool applyMask(int mask, int row, int col) {
     }
 }
 
-// Generate Reed-Solomon error correction codewords for QR Version 2-L
+// Generate Reed-Solomon error correction codewords for QR Version 3-L
 static void generateErrorCorrection(uint8_t *data, int dataLen, uint8_t *ecc, int eccLen) {
-    // Generator polynomial for 10 error correction codewords (Version 2-L)
-    uint8_t generator[] = {196, 35, 39, 119, 235, 215, 231, 226, 93, 23, 0}; // Coefficients for 10 ECC
+    // Correct generator polynomial for 15 error correction codewords (Version 3-L)
+    // G(x) = (x-α^0)(x-α^1)...(x-α^14) in GF(256) with primitive α=2
+    uint8_t generator[] = {
+        1, 15, 54, 120, 64, 204, 45, 164, 236, 69, 84, 82, 229, 57, 109, 168
+    }; // Correct coefficients for 15 ECC codewords (Version 3-L)
     
     // Initialize ECC array
     memset(ecc, 0, eccLen);
@@ -123,25 +229,29 @@ static void setModule(QRCode *qr, int x, int y, bool value) {
     }
 }
 
-// Generate format info for QR Version 2 with given mask pattern
+// Generate format info for QR Version 3-L with given mask pattern (ISO/IEC 18004 Section 7.9)
 static uint16_t generateFormatInfo(int mask) {
-    // Error correction level L (01) + mask pattern (3 bits)
-    uint16_t data = (0x01 << 3) | (mask & 0x07);  // 5 bits total
+    // Error correction level L (01) + mask pattern (3 bits) = 5 bits total
+    uint16_t data = (0x01 << 3) | (mask & 0x07);
     
-    // BCH(15,5) error correction for format info
-    uint16_t g = 0x537;  // Generator polynomial: x^10 + x^8 + x^5 + x^4 + x^2 + x + 1
+    // BCH(15,5) error correction for format information
+    // Generator polynomial: x^10 + x^8 + x^5 + x^4 + x^2 + x + 1 = 10100110111 (binary) = 0x537
+    uint16_t generator = 0x537;
     
-    uint16_t remainder = data << 10;  // Shift data to high bits
+    // Shift data to high-order bits for polynomial division
+    uint16_t remainder = data << 10;
     
+    // Perform polynomial division
     for (int i = 4; i >= 0; i--) {
         if (remainder & (1 << (i + 10))) {
-            remainder ^= (g << i);
+            remainder ^= (generator << i);
         }
     }
     
+    // Combine data and remainder
     uint16_t formatInfo = (data << 10) | remainder;
     
-    // Apply mask pattern: 101010000010010
+    // Apply masking pattern 101010000010010 (0x5412) for format information
     formatInfo ^= 0x5412;
     
     return formatInfo;
@@ -152,9 +262,14 @@ static int chooseBestMask(QRCode *qr, const uint8_t *fullStream) {
     int bestMask = 0;
     int bestPenalty = INT_MAX;
     
-    printf("[qr] Evaluating mask patterns...\n");
+    printf("[qr] Evaluating mask patterns (this may take a few seconds)...\n");
     
     for (int mask = 0; mask < 8; mask++) {
+        // Yield every 2 masks to prevent watchdog timeout
+        if ((mask % 2) == 0) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        
         // Create a copy of the QR code for testing this mask
         QRCode testQr;
         memcpy(&testQr, qr, sizeof(QRCode));
@@ -185,7 +300,7 @@ static int chooseBestMask(QRCode *qr, const uint8_t *fullStream) {
                     
                     // Get data bit
                     bool dataBit = false;
-                    if (byteIndex < 44) {
+                    if (byteIndex < QR_TOTAL_CODEWORDS) {
                         dataBit = (fullStream[byteIndex] >> (7 - bitIndex)) & 1;
                         bitIndex++;
                         if (bitIndex >= 8) {
@@ -213,6 +328,9 @@ static int chooseBestMask(QRCode *qr, const uint8_t *fullStream) {
             bestMask = mask;
         }
         
+        // Yield after each mask evaluation to prevent system stalling
+        vTaskDelay(pdMS_TO_TICKS(25));
+        
         // Reset for next iteration
         byteIndex = 0;
         bitIndex = 0;
@@ -228,21 +346,24 @@ static int chooseBestMask(QRCode *qr, const uint8_t *fullStream) {
 // Optimized for 240x240 display with text overlay
 
 static void drawFinderPattern(QRCode *qr, int x, int y) {
-    // Draw standard 7x7 finder pattern
+    // Draw standard 7x7 finder pattern (ISO/IEC 18004 Section 7.3.2)
     for (int dy = -3; dy <= 3; dy++) {
         for (int dx = -3; dx <= 3; dx++) {
             int px = x + dx;
             int py = y + dy;
             
-            // Outer border (7x7)
+            // Skip if outside QR bounds
+            if (px < 0 || px >= qr->size || py < 0 || py >= qr->size) continue;
+            
+            // Outer border (7x7) - always black
             if (abs(dx) == 3 || abs(dy) == 3) {
                 setModule(qr, px, py, true);
             }
-            // Inner square (3x3)
+            // Inner square (3x3) - always black  
             else if (abs(dx) <= 1 && abs(dy) <= 1) {
                 setModule(qr, px, py, true);
             }
-            // White space between
+            // White ring between outer and inner
             else {
                 setModule(qr, px, py, false);
             }
@@ -250,27 +371,98 @@ static void drawFinderPattern(QRCode *qr, int x, int y) {
     }
 }
 
+static void drawSeparators(QRCode *qr) {
+    // Add white separators around finder patterns (ISO/IEC 18004 Section 7.3.3)
+    
+    // Top-left separator
+    for (int i = 0; i < 8; i++) {
+        if (i < qr->size) setModule(qr, i, 7, false);  // Horizontal
+        if (i < qr->size) setModule(qr, 7, i, false);  // Vertical
+    }
+    
+    // Top-right separator  
+    for (int i = 0; i < 8; i++) {
+        if (qr->size - 8 + i >= 0 && qr->size - 8 + i < qr->size) {
+            setModule(qr, qr->size - 8 + i, 7, false);  // Horizontal
+        }
+        if (i < qr->size) {
+            setModule(qr, qr->size - 8, i, false);  // Vertical
+        }
+    }
+    
+    // Bottom-left separator
+    for (int i = 0; i < 8; i++) {
+        if (i < qr->size) {
+            setModule(qr, i, qr->size - 8, false);  // Horizontal
+        }
+        if (qr->size - 8 + i >= 0 && qr->size - 8 + i < qr->size) {
+            setModule(qr, 7, qr->size - 8 + i, false);  // Vertical
+        }
+    }
+}
+
 static void drawTimingPattern(QRCode *qr) {
-    // Standard timing patterns at row/col 6
-    // Horizontal timing pattern
+    // Standard timing patterns at row/col 6 (ISO/IEC 18004 Section 7.3.5)
+    // Alternating black/white modules: black for even positions, white for odd
+    
+    // Horizontal timing pattern (row 6)
     for (int x = 8; x < qr->size - 8; x++) {
         setModule(qr, x, 6, (x % 2) == 0);
     }
     
-    // Vertical timing pattern  
+    // Vertical timing pattern (column 6)
     for (int y = 8; y < qr->size - 8; y++) {
         setModule(qr, 6, y, (y % 2) == 0);
     }
+}
+
+static void drawDarkModule(QRCode *qr) {
+    // Dark module for Version 3: always at (4*version + 9, 8) = (21, 8)
+    // (ISO/IEC 18004 Section 7.3.6)
+    int x = 4 * QR_VERSION + 9;  // 4*3 + 9 = 21
+    int y = 8;
+    setModule(qr, x, y, true);  // Always black
+    printf("[qr] Dark module placed at (%d, %d)\n", x, y);
+}
+
+// Check if a module is reserved for function patterns
+static bool isReservedModule(QRCode *qr, int col, int row) {
+    // Finder patterns (7x7 each) + separators (8x8 each)
+    if ((col < 9 && row < 9) ||                           // Top-left
+        (col >= qr->size - 8 && row < 9) ||              // Top-right 
+        (col < 9 && row >= qr->size - 8)) {              // Bottom-left
+        return true;
+    }
+    
+    // Timing patterns (row 6 and column 6)
+    if (col == 6 || row == 6) {
+        return true;
+    }
+    
+    // Format information areas
+    if ((col < 9 && row == 8) ||                         // Horizontal format info
+        (col == 8 && row < 9) ||                         // Vertical format info (top-left)
+        (col == 8 && row >= qr->size - 7) ||             // Vertical format info (bottom)
+        (col >= qr->size - 8 && row == 8)) {             // Horizontal format info (top-right)
+        return true;
+    }
+    
+    // Dark module at (4*version + 9, 8) = (21, 8) for Version 3
+    if (col == 4 * QR_VERSION + 9 && row == 8) {
+        return true;
+    }
+    
+    return false;
 }
 
 static void encodeData(QRCode *qr, const char *data) {
     int dataLen = strlen(data);
     printf("[qr] Encoding data: %s (length=%d)\n", data, dataLen);
     
-    // Create QR data stream for Version 2-L (34 data + 10 error correction = 44 total)
-    uint8_t dataBytes[34];
-    uint8_t eccBytes[10];
-    uint8_t fullStream[44];
+    // Create QR data stream for Version 3-L (53 data + 15 error correction = 68 total)
+    uint8_t dataBytes[QR_DATA_CODEWORDS];
+    uint8_t eccBytes[QR_ECC_CODEWORDS];
+    uint8_t fullStream[QR_TOTAL_CODEWORDS];
     
     memset(dataBytes, 0, sizeof(dataBytes));
     
@@ -315,7 +507,7 @@ static void encodeData(QRCode *qr, const char *data) {
             int byteIndex = bitPos / 8;
             int bitIndex = 7 - (bitPos % 8);
             
-            if (byteIndex < 34 && bit) {
+            if (byteIndex < QR_DATA_CODEWORDS && bit) {
                 dataBytes[byteIndex] |= (1 << bitIndex);
             }
             bitPos++;
@@ -324,8 +516,12 @@ static void encodeData(QRCode *qr, const char *data) {
     
     // Add terminator 0000 (4 bits) if we have space
     int currentByteIndex = bitPos / 8;
-    if (currentByteIndex < 34) {
-        bitPos += 4; // Skip 4 bits for terminator (already 0 from memset)
+    if (currentByteIndex < QR_DATA_CODEWORDS) {
+        // Only add terminator if we have at least 4 bits of space
+        int remainingBits = (QR_DATA_CODEWORDS * 8) - bitPos;
+        if (remainingBits >= 4) {
+            bitPos += 4; // Skip 4 bits for terminator (already 0 from memset)
+        }
     }
     
     // Pad to byte boundary if needed
@@ -336,21 +532,20 @@ static void encodeData(QRCode *qr, const char *data) {
     int padByteIndex = bitPos / 8;
     uint8_t padPattern[] = {0xEC, 0x11};
     int padIndex = 0;
-    while (padByteIndex < 34) {
+    while (padByteIndex < QR_DATA_CODEWORDS) {
         dataBytes[padByteIndex++] = padPattern[padIndex % 2];
         padIndex++;
     }
     
     // Generate error correction codewords
-    generateErrorCorrection(dataBytes, 34, eccBytes, 10);
+    generateErrorCorrection(dataBytes, QR_DATA_CODEWORDS, eccBytes, QR_ECC_CODEWORDS);
     
     // Combine data and error correction
-    memcpy(fullStream, dataBytes, 34);
-    memcpy(fullStream + 34, eccBytes, 10);
+    memcpy(fullStream, dataBytes, QR_DATA_CODEWORDS);
+    memcpy(fullStream + QR_DATA_CODEWORDS, eccBytes, QR_ECC_CODEWORDS);
     
     printf("[qr] Data encoding: Byte0=0x%02X Byte1=0x%02X Byte2=0x%02X\n", 
            dataBytes[0], dataBytes[1], dataBytes[2]);
-    printf("[qr] Expected: Mode=0100 Count=00101010 -> Byte0=0x42 Byte1=0xA0\n");
     
     // Debug: Print first few bytes of address data to verify encoding
     printf("[qr] Address bytes: ");
@@ -363,7 +558,7 @@ static void encodeData(QRCode *qr, const char *data) {
     printf("[qr] Bit structure: Mode(4)=0x%X Count(8)=0x%02X FirstChar(8)=0x%02X\n", 
            0x4, dataLen, (uint8_t)data[0]);
     printf("[qr] Address data: %.*s...\n", dataLen > 10 ? 10 : dataLen, data);
-    printf("[qr] Generated error correction, total stream: 44 bytes\n");
+    printf("[qr] Generated error correction, total stream: %d bytes\n", QR_TOTAL_CODEWORDS);
     
     // Choose optimal mask pattern by evaluating all 8 patterns
     int selectedMask = chooseBestMask(qr, fullStream);
@@ -372,31 +567,40 @@ static void encodeData(QRCode *qr, const char *data) {
     uint16_t formatInfo = generateFormatInfo(selectedMask);
     printf("[qr] Using mask %d, format info: 0x%04x\n", selectedMask, formatInfo);
     
-    // Place format information around finder patterns
-    // Top-left format bits
+    // Place format information around finder patterns (ISO/IEC 18004 Section 7.9.1)
+    // 15-bit format info is placed in specific locations around finder patterns
+    
+    // Top-left finder pattern area
+    // Horizontal strip: bits 0-5 at (8,0) to (8,5), bit 6 at (8,7), bit 7 at (8,8)
     for (int i = 0; i < 6; i++) {
         bool bit = (formatInfo >> i) & 1;
         setModule(qr, 8, i, bit);
-        setModule(qr, i, 8, bit);
     }
-    setModule(qr, 8, 7, (formatInfo >> 6) & 1);
+    setModule(qr, 8, 7, (formatInfo >> 6) & 1);  // Skip (8,6) - timing pattern
     setModule(qr, 8, 8, (formatInfo >> 7) & 1);
-    setModule(qr, 7, 8, (formatInfo >> 8) & 1);
     
-    // Top-right format bits
+    // Vertical strip: bit 8 at (7,8), bits 9-14 at (5,8) down to (0,8)
+    setModule(qr, 7, 8, (formatInfo >> 8) & 1);
+    for (int i = 0; i < 6; i++) {
+        bool bit = (formatInfo >> (14 - i)) & 1;  // bits 14,13,12,11,10,9
+        setModule(qr, 5 - i, 8, bit);  // positions (5,8) to (0,8)
+    }
+    
+    // Top-right finder pattern area  
+    // Horizontal strip: bits 0-7 at (size-1,8) to (size-8,8)
     for (int i = 0; i < 8; i++) {
-        bool bit = (formatInfo >> (14 - i)) & 1;
+        bool bit = (formatInfo >> i) & 1;
         setModule(qr, qr->size - 1 - i, 8, bit);
     }
     
-    // Bottom-left format bits
+    // Bottom-left finder pattern area
+    // Vertical strip: bits 0-6 at (8,size-7) to (8,size-1)  
     for (int i = 0; i < 7; i++) {
-        bool bit = (formatInfo >> (6 - i)) & 1;
+        bool bit = (formatInfo >> i) & 1;
         setModule(qr, 8, qr->size - 7 + i, bit);
     }
     
-    // Dark module at (4*version + 9, 8) = (17, 8) for version 2
-    setModule(qr, 8, qr->size - 8, true);
+    // Note: Dark module is already placed by drawDarkModule() at (21, 8) for Version 3
     
     // Place data in proper QR zigzag pattern starting from bottom-right
     int byteIndex = 0;
@@ -419,18 +623,14 @@ static void encodeData(QRCode *qr, const char *data) {
             for (int colOffset = 0; colOffset >= -1; colOffset--) {
                 int col = colPair + colOffset;
                 
-                // Skip if this is a function pattern area
-                if ((col < 9 && row < 9) ||                    // Top-left finder + format
-                    (col >= qr->size - 8 && row < 9) ||       // Top-right finder + format
-                    (col < 9 && row >= qr->size - 8) ||       // Bottom-left finder + format
-                    (col == 6 || row == 6) ||                 // Timing patterns
-                    (col == 8) || (row == 8)) {               // Format info
+                // Skip if this is a function pattern area (ISO/IEC 18004 Section 7.7.3)
+                if (isReservedModule(qr, col, row)) {
                     continue;
                 }
                 
                 // Get data bit
                 bool dataBit = false;
-                if (byteIndex < 44) {
+                if (byteIndex < QR_TOTAL_CODEWORDS) {
                     dataBit = (fullStream[byteIndex] >> (7 - bitIndex)) & 1;
                     bitIndex++;
                     if (bitIndex >= 8) {
@@ -452,7 +652,7 @@ static void encodeData(QRCode *qr, const char *data) {
     }
     
     printf("[qr] Placed data with error correction and mask pattern %d, used %d bytes\n", selectedMask, byteIndex);
-    printf("[qr] QR Version 2 (25x25) generated successfully\n");
+    printf("[qr] QR Version 3 (29x29) generated successfully\n");
     
     // Debug: Verify QR structure
     printf("[qr] QR Structure: Size=%d, Finder patterns at (3,3), (%d,3), (3,%d)\n", 
@@ -470,13 +670,19 @@ bool qr_generate(QRCode *qr, const char *data) {
     // Clear all modules
     memset(qr->modules, 0, QR_MODULES);
     
-    // Draw finder patterns (corners)
+    // Draw finder patterns at corners (ISO/IEC 18004 Section 7.3.2)
     drawFinderPattern(qr, 3, 3);                    // Top-left
     drawFinderPattern(qr, qr->size - 4, 3);        // Top-right  
     drawFinderPattern(qr, 3, qr->size - 4);        // Bottom-left
     
+    // Draw separators around finder patterns
+    drawSeparators(qr);
+    
     // Draw timing patterns
     drawTimingPattern(qr);
+    
+    // Draw dark module
+    drawDarkModule(qr);
     
     // Encode data
     encodeData(qr, data);
@@ -492,48 +698,7 @@ bool qr_getModule(const QRCode *qr, int x, int y) {
     return qr->modules[y * qr->size + x] == 1;
 }
 
-// Simple 8x8 font for displaying ETH address
-static const uint8_t font8x8[96][8] = {
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // ' '
-    {0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00}, // '!'
-    {0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // '"'
-    {0x36, 0x36, 0x7F, 0x36, 0x7F, 0x36, 0x36, 0x00}, // '#'
-    {0x0C, 0x3E, 0x03, 0x1E, 0x30, 0x1F, 0x0C, 0x00}, // '$'
-    {0x00, 0x63, 0x33, 0x18, 0x0C, 0x66, 0x63, 0x00}, // '%'
-    {0x1C, 0x36, 0x1C, 0x6E, 0x3B, 0x33, 0x6E, 0x00}, // '&'
-    {0x06, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00}, // '
-    {0x18, 0x0C, 0x06, 0x06, 0x06, 0x0C, 0x18, 0x00}, // '()
-    {0x06, 0x0C, 0x18, 0x18, 0x18, 0x0C, 0x06, 0x00}, // ')'
-    {0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00}, // '*'
-    {0x00, 0x0C, 0x0C, 0x3F, 0x0C, 0x0C, 0x00, 0x00}, // '+'
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x06, 0x00}, // ','
-    {0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00}, // '-'
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x00}, // '.'
-    {0x60, 0x30, 0x18, 0x0C, 0x06, 0x03, 0x01, 0x00}, // '/'
-    {0x3E, 0x63, 0x73, 0x7B, 0x6F, 0x67, 0x3E, 0x00}, // '0'
-    {0x0C, 0x0E, 0x0C, 0x0C, 0x0C, 0x0C, 0x3F, 0x00}, // '1'
-    {0x1E, 0x33, 0x30, 0x1C, 0x06, 0x33, 0x3F, 0x00}, // '2'
-    {0x1E, 0x33, 0x30, 0x1C, 0x30, 0x33, 0x1E, 0x00}, // '3'
-    {0x38, 0x3C, 0x36, 0x33, 0x7F, 0x30, 0x78, 0x00}, // '4'
-    {0x3F, 0x03, 0x1F, 0x30, 0x30, 0x33, 0x1E, 0x00}, // '5'
-    {0x1C, 0x06, 0x03, 0x1F, 0x33, 0x33, 0x1E, 0x00}, // '6'
-    {0x3F, 0x33, 0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x00}, // '7'
-    {0x1E, 0x33, 0x33, 0x1E, 0x33, 0x33, 0x1E, 0x00}, // '8'
-    {0x1E, 0x33, 0x33, 0x3E, 0x30, 0x18, 0x0E, 0x00}, // '9'
-    {0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x0C, 0x00}, // ':'
-    {0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x06, 0x00}, // ';'
-    {0x18, 0x0C, 0x06, 0x03, 0x06, 0x0C, 0x18, 0x00}, // '<'
-    {0x00, 0x00, 0x3F, 0x00, 0x00, 0x3F, 0x00, 0x00}, // '='
-    {0x06, 0x0C, 0x18, 0x30, 0x18, 0x0C, 0x06, 0x00}, // '>'
-    {0x1E, 0x33, 0x30, 0x18, 0x0C, 0x00, 0x0C, 0x00}, // '?'
-    {0x3E, 0x63, 0x7B, 0x7B, 0x7B, 0x03, 0x1E, 0x00}, // '@'
-    {0x0C, 0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x00}, // 'A'
-    {0x3F, 0x66, 0x66, 0x3E, 0x66, 0x66, 0x3F, 0x00}, // 'B'
-    {0x3C, 0x66, 0x03, 0x03, 0x03, 0x66, 0x3C, 0x00}, // 'C'
-    {0x1F, 0x36, 0x66, 0x66, 0x66, 0x36, 0x1F, 0x00}, // 'D'
-    {0x7F, 0x46, 0x16, 0x1E, 0x16, 0x46, 0x7F, 0x00}, // 'E'
-    {0x7F, 0x46, 0x16, 0x1E, 0x16, 0x06, 0x0F, 0x00}, // 'F'
-};
+// Note: Font removed since QR area now has NO text overlay for proper scanning
 
 void qr_renderToDisplay(uint8_t *buffer, uint32_t y0, const char *ethAddress, const QRCode *qr) {
     const uint32_t DISPLAY_WIDTH = 240;
@@ -547,107 +712,86 @@ void qr_renderToDisplay(uint8_t *buffer, uint32_t y0, const char *ethAddress, co
     // Clear buffer with white background (RGB565: 0xFFFF)
     uint16_t *pixelBuffer = (uint16_t*)buffer;
     for (int i = 0; i < DISPLAY_WIDTH * FRAGMENT_HEIGHT; i++) {
-        pixelBuffer[i] = 0xFFFF; // White in RGB565
+        pixelBuffer[i] = 0xFFFF; // White background
     }
     
-    // Display ETH address text at top (first 30 pixels)
-    if (y0 < 30) {
-        // Safely copy address to prevent corruption
-        char safe_address[50];
-        strncpy(safe_address, ethAddress, 42);
-        safe_address[42] = '\0'; // Ensure null termination
-        
-        // Only print address once per QR generation (not per fragment)
-        static char last_address[50] = "";
-        if (strcmp(safe_address, last_address) != 0) {
-            printf("[qr] Rendering ETH address: %.42s\n", safe_address);
-            strncpy(last_address, safe_address, sizeof(last_address) - 1);
-            last_address[sizeof(last_address) - 1] = '\0';
-        }
-        
-        // Render address text in two lines
-        int line = 0;
-        int char_x = DISPLAY_WIDTH - 10 - (21 * 6); // Start from right, account for 21 chars * 6 pixels each
-        
-        for (int i = 0; i < 42 && line < 2; i++) {
-            char c = safe_address[i];
-            
-            // Handle line wrapping after 21 characters
-            if (i == 21) {
-                line++;
-                char_x = DISPLAY_WIDTH - 10 - (21 * 6); // Reset to right position for second line
-            }
-            
-            if (line >= 2) break;
-            
-            int char_y = 2 + (line * 12);
-            
-            // Skip if this character is outside current fragment
-            if (char_y < y0 || char_y + 8 > y0 + FRAGMENT_HEIGHT) {
-                char_x += 6;
-                continue;
-            }
-            
-            // Get font data for character
-            uint8_t font_index = (c >= 32 && c <= 127) ? (c - 32) : 0;
-            if (font_index >= 96) font_index = 0;
-            
-            // Draw character (fix mirroring by reading bits left-to-right)
-            for (int py = 0; py < 8; py++) {
-                if (char_y + py < y0 || char_y + py >= y0 + FRAGMENT_HEIGHT) continue;
-                
-                uint8_t row = font8x8[font_index][py];
-                for (int px = 0; px < 8; px++) {
-                    if (char_x + px >= DISPLAY_WIDTH) break;
-                    
-                    // Fix bit order - read from MSB to LSB (left to right)
-                    if (row & (0x80 >> px)) {
-                        // Mirror X coordinate to fix display orientation
-                        int mirrored_x = DISPLAY_WIDTH - 1 - (char_x + px);
-                        int pixel_pos = (char_y + py - y0) * DISPLAY_WIDTH + mirrored_x;
-                        if (pixel_pos >= 0 && pixel_pos < DISPLAY_WIDTH * FRAGMENT_HEIGHT) {
-                            pixelBuffer[pixel_pos] = 0x0000; // Black text in RGB565
-                        }
-                    }
-                }
-            }
-            char_x += 6; // Character spacing
-        }
+    // **FULL PAGE QR**: Maximum size with proper quiet zone for optimal scanning
+    const int MODULE_SIZE = 7;  // Larger scaling: each QR module = 7x7 pixels
+    const int QUIET_ZONE = 4 * MODULE_SIZE;  // 4 modules = 28 pixels on each side
+    
+    // Total QR size with quiet zone: (29 + 8) * 7 = 259 pixels (larger than 240px)
+    // Scale down slightly to fit: use MODULE_SIZE = 6
+    const int ACTUAL_MODULE_SIZE = 6;  // 6x6 pixels per module
+    const int ACTUAL_QUIET_ZONE = 4 * ACTUAL_MODULE_SIZE;  // 24 pixels each side
+    const int QR_WITH_BORDER = (qr->size + 8) * ACTUAL_MODULE_SIZE;  // (29+8)*6 = 222 pixels
+    const int QR_START_X = (DISPLAY_WIDTH - QR_WITH_BORDER) / 2;  // Center horizontally  
+    const int QR_START_Y = (DISPLAY_WIDTH - QR_WITH_BORDER) / 2;  // Center vertically (assuming square display)
+    
+    // Only print address once per QR generation (not per fragment)
+    static char last_address[50] = "";
+    char safe_address[50];
+    strncpy(safe_address, ethAddress, 42);
+    safe_address[42] = '\0';
+    
+    if (strcmp(safe_address, last_address) != 0) {
+        printf("[qr] Rendering FULL PAGE QR: %dx%d modules, %dx%d pixels, quiet zone=%d\n", 
+               qr->size, qr->size, qr->size * ACTUAL_MODULE_SIZE, qr->size * ACTUAL_MODULE_SIZE, ACTUAL_QUIET_ZONE);
+        strncpy(last_address, safe_address, sizeof(last_address) - 1);
+        last_address[sizeof(last_address) - 1] = '\0';
     }
     
-    // Render scaled QR code starting below text area
+    // **NO TEXT OVERLAY** - QR code area is completely clean for scanning
+    
+    // Render QR code with proper quiet zone and integer scaling
     for (int y = 0; y < FRAGMENT_HEIGHT; y++) {
         int display_y = y0 + y;
         
-        // Skip text area
-        if (display_y < QR_OFFSET_Y) continue;
+        // Check if we're in the QR area (including quiet zone)
+        if (display_y < QR_START_Y || display_y >= QR_START_Y + QR_WITH_BORDER) {
+            continue; // Outside QR area - leave white
+        }
         
-        int qr_pixel_y = display_y - QR_OFFSET_Y;
-        int qr_module_y = qr_pixel_y / QR_SCALE;
+        int qr_area_y = display_y - QR_START_Y;
         
-        // Check if we're within QR code bounds
-        if (qr_module_y >= 0 && qr_module_y < qr->size) {
-            for (int x = 0; x < DISPLAY_WIDTH; x++) {
-                int qr_pixel_x = x - QR_OFFSET_X;
+        for (int x = 0; x < DISPLAY_WIDTH; x++) {
+            // Check if we're in the QR area horizontally
+            if (x < QR_START_X || x >= QR_START_X + QR_WITH_BORDER) {
+                continue; // Outside QR area - leave white
+            }
+            
+            int qr_area_x = x - QR_START_X;
+            
+            bool is_black = false;
+            
+            // Check if we're in the quiet zone (always white)
+            if (qr_area_x < ACTUAL_QUIET_ZONE || qr_area_x >= ACTUAL_QUIET_ZONE + (qr->size * ACTUAL_MODULE_SIZE) ||
+                qr_area_y < ACTUAL_QUIET_ZONE || qr_area_y >= ACTUAL_QUIET_ZONE + (qr->size * ACTUAL_MODULE_SIZE)) {
+                // In quiet zone - leave white
+                is_black = false;
+            } else {
+                // In actual QR code area - determine module
+                int qr_pixel_x = qr_area_x - ACTUAL_QUIET_ZONE;
+                int qr_pixel_y = qr_area_y - ACTUAL_QUIET_ZONE;
                 
-                bool is_black = false;
-                if (qr_pixel_x >= 0) {
-                    int qr_module_x = qr_pixel_x / QR_SCALE;
-                    if (qr_module_x >= 0 && qr_module_x < qr->size) {
-                        is_black = qr_getModule(qr, qr_module_x, qr_module_y);
-                    }
+                int qr_module_x = qr_pixel_x / ACTUAL_MODULE_SIZE;
+                int qr_module_y = qr_pixel_y / ACTUAL_MODULE_SIZE;
+                
+                if (qr_module_x >= 0 && qr_module_x < qr->size && 
+                    qr_module_y >= 0 && qr_module_y < qr->size) {
+                    is_black = qr_getModule(qr, qr_module_x, qr_module_y);
                 }
-                
+            }
+            
+            // **PURE BLACK/WHITE PIXELS** - no anti-aliasing
+            if (is_black) {
                 // Mirror X coordinate to fix display orientation
                 int mirrored_x = DISPLAY_WIDTH - 1 - x;
                 int pixel_pos = y * DISPLAY_WIDTH + mirrored_x;
                 if (pixel_pos >= 0 && pixel_pos < DISPLAY_WIDTH * FRAGMENT_HEIGHT) {
-                    if (is_black) {
-                        pixelBuffer[pixel_pos] = 0x0000; // Black in RGB565
-                    }
-                    // White pixels already set above
+                    pixelBuffer[pixel_pos] = 0x0000; // Pure black in RGB565
                 }
             }
+            // White pixels already set in buffer initialization
         }
     }
 }

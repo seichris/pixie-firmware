@@ -8,11 +8,15 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define QR_SIZE 25  // QR code version 2 (25x25) - can handle 42 bytes
-#define QR_MODULES (QR_SIZE * QR_SIZE)
-#define QR_SCALE 7  // Scale factor for display (25*7 = 175px)
-#define QR_OFFSET_X 32  // Center QR code horizontally ((240-175)/2)
-#define QR_OFFSET_Y 40   // Leave space at top for address text
+#define QR_VERSION 3
+#define QR_SIZE 29  // QR code version 3 (29x29) - optimal for 42-character addresses
+#define QR_MODULES (QR_SIZE * QR_SIZE)  // 841 modules
+#define QR_DATA_CODEWORDS 53   // Data capacity for Version 3-L
+#define QR_ECC_CODEWORDS 15    // Error correction codewords for Version 3-L
+#define QR_TOTAL_CODEWORDS (QR_DATA_CODEWORDS + QR_ECC_CODEWORDS)  // 68 total
+#define QR_SCALE 6  // Scale factor for display (29*6 = 174px)  
+#define QR_OFFSET_X ((240 - QR_SIZE * QR_SCALE) / 2)  // Center QR code horizontally
+#define QR_OFFSET_Y ((240 - QR_SIZE * QR_SCALE) / 2)  // Center QR code vertically
 
 // Simple QR code structure
 typedef struct {
