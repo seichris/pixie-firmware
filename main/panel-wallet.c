@@ -146,7 +146,6 @@ static void derivePrivateKey(const uint8_t *masterSeed, uint32_t index, uint8_t 
     
     // Deterministic key stretching using multiple hash rounds
     // This creates a deterministic private key based on master seed + index
-    uint8_t hash[32];
     
     // First round: Hash the input
     uint32_t state[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 
