@@ -318,6 +318,14 @@ static void keyChanged(EventPayload event, void *_state) {
     // Button 4 (KeySouth) = Down/Left action (unused)
     
     if (keys & KeyOk) {
+        // If showing QR, exit QR view and return to address view
+        if (state->showingQR) {
+            state->showingQR = false;
+            hideQRCode(state);
+            ffx_sceneLabel_setText(state->nodeInstructions, "Key1=New Address  Key3=QR Code  Key2=Exit");
+            return;
+        }
+        // Otherwise, exit wallet completely
         panel_pop();
         return;
     }
